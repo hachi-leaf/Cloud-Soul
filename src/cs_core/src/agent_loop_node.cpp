@@ -24,8 +24,8 @@
 // 参数:
 //   agent_name          - 命名空间前缀，默认 "agent"
 //   context_dir         - 上下文持久化目录，默认 "~/.cloud_soul/contexts"
-//   max_context_tokens  - 触发压缩的 token 阈值，默认 32000
-//   summary_turns       - 压缩时保留的最近对话轮数，默认 3
+//   max_context_tokens  - 触发压缩的 token 阈值，默认 200000
+//   summary_turns       - 压缩时保留的最近对话轮数，默认 30
 //   loop_rate           - 主循环频率 (Hz)，0 表示无间隔连续循环，默认 0
 //   openai_base_url     - OpenAI API 基础 URL，默认 "https://api.deepseek.com"
 //   openai_api_key      - API 密钥，默认取环境变量 OPENAI_API_KEY
@@ -71,8 +71,8 @@ public:
   AgentLoopNode() : Node("agent_loop_node") {
     this->declare_parameter<std::string>("agent_name", "");
     this->declare_parameter<std::string>("context_dir", "~/.cloud_soul/contexts");
-    this->declare_parameter<int>("max_context_tokens", 32000);
-    this->declare_parameter<int>("summary_turns", 3);
+    this->declare_parameter<int>("max_context_tokens", 200000);
+    this->declare_parameter<int>("summary_turns", 30);
     this->declare_parameter<double>("loop_rate", 0.0);
     this->declare_parameter<std::string>("openai_base_url", "https://api.deepseek.com");
     this->declare_parameter<std::string>("openai_api_key", "");
@@ -430,7 +430,7 @@ private:
           try {
             auto j = nlohmann::json::parse(snapshot);
             if (j.contains("user_command")) {
-              hash_src = j["user_command"].dump();
+              if (j["user_command"].contains("commands")) { hash_src = j["user_command"]["commands"].dump(); }
             }
           } catch (...) {}
           std::string cur_hash = std::to_string(std::hash<std::string>{}(hash_src));
