@@ -25,9 +25,8 @@ class ChatNode(Node):
         self.sub = self.create_subscription(String, f"/{agent_name}/response", self.on_response, 10)
         self.pending = []            # Agent 回复队列
         self.input_buf = ""          # 当前输入行
-        self.input_cursor = 0        # 光标位置(用于行内编辑)
-        self.in_input = False        # 是否处于输入模式
         self.running = True
+        self.in_input = False        # 是否处于输入模式
         self.decoder = codecs.getincrementaldecoder('utf-8')()
 
     def on_response(self, msg):
@@ -35,25 +34,22 @@ class ChatNode(Node):
         self.pending.append(msg.data)
 
     def flush_pending(self):
-        """在输入行上方打印所有待显示回复，然后恢复输入行"""
+        """在输入行上方打印所有待显示回复，然后恢复提示符"""
         if not self.pending:
             return
         msgs = self.pending
         self.pending = []
-        # 如果正在输入，先清除当前行
-        if self.in_input:
-            sys.stdout.write("\r\033[K")
+        # 始终先清除当前行（无论是否在输入中）
+        sys.stdout.write("\r\033[K")
         for content in msgs:
             sys.stdout.write(f"{CYAN}{BOLD}Adam{RESET} {DIM}[{ts()}]{RESET}\r\n")
             for line in content.split('\n'):
                 sys.stdout.write(f"  {line}\r\n")
-        # 恢复输入行
+        # 始终恢复提示符（输入中恢复带缓冲区，否则仅箭头）
         if self.in_input:
-            self._show_input_line()
-        sys.stdout.flush()
-
-    def _show_input_line(self):
-        sys.stdout.write(f"\r{BOLD}{YELLOW}▸ {RESET}{self.input_buf}")
+            sys.stdout.write(f"\r{BOLD}{YELLOW}▸ {RESET}{self.input_buf}")
+        else:
+            sys.stdout.write(f"{BOLD}{YELLOW}▸ {RESET}")
         sys.stdout.flush()
 
     def send_line(self, line: str):
