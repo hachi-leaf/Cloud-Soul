@@ -1,8 +1,12 @@
 #!/usr/bin/python3
-"""Cloud-Soul 终端对话 - 实时回复 + 保护正在输入的文本"""
-import sys, threading, termios, tty, select, rclpy
+"""
+Cloud-Soul 终端对话
+单线程事件循环：交替处理 ROS2 回调和终端输入，零竞态。
+"""
+import sys, os, codecs, termios, tty, select, rclpy
 from datetime import datetime, timezone
 from rclpy.node import Node
+from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import String
 
 BOLD   = "\033[1m"; DIM = "\033[2m"
@@ -19,106 +23,135 @@ class ChatNode(Node):
         self.agent = agent_name
         self.pub = self.create_publisher(String, f"/{agent_name}/master_chat", 10)
         self.sub = self.create_subscription(String, f"/{agent_name}/response", self.on_response, 10)
-        self.pending = []          # 积压回复（有输入时暂存）
-        self.input_buf = ""        # 当前正在输入的文本
-        self.in_input = False      # 是否正在输入
-        self.lock = threading.Lock()
+        self.pending = []            # Agent 回复队列
+        self.input_buf = ""          # 当前输入行
+        self.input_cursor = 0        # 光标位置(用于行内编辑)
+        self.in_input = False        # 是否处于输入模式
         self.running = True
-
-        print(f"\n{GREEN}{BOLD}╭──────────────────────────────────────────╮{RESET}")
-        print(f"{GREEN}{BOLD}│{RESET}   Cloud-Soul Terminal Chat             {GREEN}{BOLD}│{RESET}")
-        print(f"{GREEN}{BOLD}│{RESET}   Agent: {CYAN}{agent_name:<31}{GREEN}{BOLD}│{RESET}")
-        print(f"{GREEN}{BOLD}│{RESET}   Ctrl+C 退出  /help 查看帮助          {GREEN}{BOLD}│{RESET}")
-        print(f"{GREEN}{BOLD}╰──────────────────────────────────────────╯{RESET}\n")
-
-        self.input_thread = threading.Thread(target=self.read_char_input, daemon=True)
-        self.input_thread.start()
-
-    def flush_pending(self):
-        with self.lock:
-            if not self.pending:
-                return
-            # 上移光标到输入行，清除，打印积压回复，再打印提示符+已输入内容
-            if self.in_input:
-                sys.stdout.write("\r\033[K")  # 清除当前行
-            for content in self.pending:
-                sys.stdout.write(f"{CYAN}{BOLD}Adam{RESET} {DIM}[{ts()}]{RESET}\n")
-                sys.stdout.write(f"  {content}\n\n")
-            sys.stdout.flush()
-            self.pending.clear()
-            if self.in_input:
-                sys.stdout.write(f"{BOLD}{YELLOW}▸ {RESET}{self.input_buf}")
-                sys.stdout.flush()
-
-    def read_char_input(self):
-        """逐字符读取，支持实时显示 + 回复时不丢已输入内容"""
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            while self.running:
-                # 先检查有无积压回复
-                with self.lock:
-                    if self.pending:
-                        self.flush_pending()
-
-                # 非阻塞读取
-                if select.select([sys.stdin], [], [], 0.1)[0]:
-                    ch = sys.stdin.read(1)
-                    if ch == '\x03':  # Ctrl+C
-                        self.running = False
-                        break
-                    elif ch in ('\r', '\n'):  # Enter
-                        self.flush_pending()
-                        sys.stdout.write("\r\033[K")
-                        line = self.input_buf.strip()
-                        self.input_buf = ""
-                        self.in_input = False
-                        if line == "/help":
-                            sys.stdout.write(f"{GREEN}命令:{RESET}\n  直接输入文字  发送给 Agent\n  /help         显示此帮助\n  Ctrl+C        退出\n\n{GREEN}提示:{RESET}\n  Adam 的回复实时显示，正在输入的文本不会被破坏。\n\n")
-                        elif line:
-                            sys.stdout.write(f"{DIM}{GRAY}  [{ts()}] 已发送{RESET}\n")
-                            msg = String(); msg.data = line
-                            self.pub.publish(msg)
-                        # 重新显示提示符
-                        sys.stdout.write(f"{BOLD}{YELLOW}▸ {RESET}")
-                        sys.stdout.flush()
-                    elif ch == '\x7f':  # Backspace
-                        if self.input_buf:
-                            self.input_buf = self.input_buf[:-1]
-                            sys.stdout.write("\b \b")
-                            sys.stdout.flush()
-                    elif ord(ch) >= 32:  # 可打印字符
-                        self.input_buf += ch
-                        self.in_input = True
-                        sys.stdout.write(ch)
-                        sys.stdout.flush()
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        self.decoder = codecs.getincrementaldecoder('utf-8')()
 
     def on_response(self, msg):
-        with self.lock:
-            self.pending.append(msg.data)
-        # 立即触发刷新
-        self.flush_pending()
+        """ROS2 回调：仅追加到队列，不做 IO"""
+        self.pending.append(msg.data)
 
-    def destroy_node(self):
-        self.running = False
-        super().destroy_node()
+    def flush_pending(self):
+        """在输入行上方打印所有待显示回复，然后恢复输入行"""
+        if not self.pending:
+            return
+        msgs = self.pending
+        self.pending = []
+        # 如果正在输入，先清除当前行
+        if self.in_input:
+            sys.stdout.write("\r\033[K")
+        for content in msgs:
+            sys.stdout.write(f"{CYAN}{BOLD}Adam{RESET} {DIM}[{ts()}]{RESET}\r\n")
+            for line in content.split('\n'):
+                sys.stdout.write(f"  {line}\r\n")
+        # 恢复输入行
+        if self.in_input:
+            self._show_input_line()
+        sys.stdout.flush()
+
+    def _show_input_line(self):
+        sys.stdout.write(f"\r{BOLD}{YELLOW}▸ {RESET}{self.input_buf}")
+        sys.stdout.flush()
+
+    def send_line(self, line: str):
+        """发送一行文本到 Agent"""
+        line = line.strip()
+        if not line:
+            return
+        if line == "/help":
+            self.pending.append(
+                "命令:\n"
+                "  直接输入文字  发送给 Agent\n"
+                "  /help         显示此帮助\n"
+                "  Ctrl+C        退出\n"
+                "\n"
+                "提示:\n"
+                "  Adam 的回复实时显示，正在输入的文本不会被破坏。"
+            )
+            return
+        sys.stdout.write(f"{DIM}{GRAY}  [{ts()}] 已发送{RESET}\r\n")
+        msg = String(); msg.data = line
+        self.pub.publish(msg)
 
 def main():
     rclpy.init()
     agent = sys.argv[1] if len(sys.argv) > 1 else "adam"
     node = ChatNode(agent)
+
+    # 打印头部
+    print(f"\n{GREEN}{BOLD}╭──────────────────────────────────────────╮{RESET}")
+    print(f"{GREEN}{BOLD}│{RESET}   Cloud-Soul Terminal Chat             {GREEN}{BOLD}│{RESET}")
+    print(f"{GREEN}{BOLD}│{RESET}   Agent: {CYAN}{agent:<31}{GREEN}{BOLD}│{RESET}")
+    print(f"{GREEN}{BOLD}│{RESET}   Ctrl+C 退出  /help 查看帮助          {GREEN}{BOLD}│{RESET}")
+    print(f"{GREEN}{BOLD}╰──────────────────────────────────────────╯{RESET}\n")
+    sys.stdout.write(f"{BOLD}{YELLOW}▸ {RESET}")
+    sys.stdout.flush()
+
+    # 设置终端为 raw 模式
+    fd = sys.stdin.fileno()
+    old_attrs = termios.tcgetattr(fd)
+    tty.setraw(fd)
+
+    # 单线程执行器
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+
     try:
-        rclpy.spin(node)
+        while rclpy.ok() and node.running:
+            # 1) 处理 ROS2 回调（非阻塞，~20ms 粒度）
+            executor.spin_once(timeout_sec=0.02)
+
+            # 2) 显示 Agent 回复
+            node.flush_pending()
+
+            # 3) 读取终端输入（非阻塞）
+            r, _, _ = select.select([sys.stdin], [], [], 0.02)
+            if sys.stdin not in r:
+                continue
+
+            data = os.read(fd, 64)
+            if not data:
+                continue
+
+            text = node.decoder.decode(data, final=False)
+            if not text:
+                continue
+
+            for ch in text:
+                if ch == '\x03':  # Ctrl+C
+                    node.running = False
+                    break
+                elif ch in ('\r', '\n'):  # Enter
+                    line = node.input_buf
+                    node.input_buf = ""
+                    node.in_input = False
+                    sys.stdout.write("\r\n")
+                    node.send_line(line)
+                    node.flush_pending()
+                    sys.stdout.write(f"{BOLD}{YELLOW}▸ {RESET}")
+                    sys.stdout.flush()
+                elif ch == '\x7f':  # Backspace
+                    if node.input_buf:
+                        node.input_buf = node.input_buf[:-1]
+                        sys.stdout.write("\b \b")
+                        sys.stdout.flush()
+                elif ord(ch) >= 32:  # 可打印字符
+                    node.input_buf += ch
+                    node.in_input = True
+                    sys.stdout.write(ch)
+                    sys.stdout.flush()
+
     except KeyboardInterrupt:
         pass
     finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
         node.running = False
         node.destroy_node()
+        executor.shutdown()
         rclpy.shutdown()
-        # 恢复终端
         print(f"\n{GRAY}会话结束。{RESET}")
 
 if __name__ == "__main__":
