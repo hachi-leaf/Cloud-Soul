@@ -335,7 +335,7 @@ void MrymtNode::on_recall(
 }
 
 // =============================================================================
-// memory_archive 服务回调
+// memory_archive 服务回调（修正文件流转逻辑）
 // =============================================================================
 void MrymtNode::on_archive(
     const std::shared_ptr<cs_interfaces::srv::MemoryArchive::Request> req,
@@ -349,14 +349,27 @@ void MrymtNode::on_archive(
         res->error_code = -1;
         return;
     }
-    std::string compressing_path = json_path + ".compressing";
+
+    // 处理中文件：json_path + ".processing"
+    std::string processing_path = json_path + ".processing";
     std::error_code ec;
-    fs::rename(json_path, compressing_path, ec);
+
+    // 原子重命名为 .processing
+    fs::rename(json_path, processing_path, ec);
     if (ec) {
         RCLCPP_ERROR(get_logger(), "重命名失败：%s", ec.message().c_str());
         res->error_code = -2;
         return;
     }
+
+    // 辅助 lambda：失败时将 .processing 恢复为原始文件
+    auto revert_processing = [&]() {
+        std::error_code err;
+        fs::rename(processing_path, json_path, err);
+        if (err) {
+            RCLCPP_ERROR(get_logger(), "恢复处理文件失败：%s", err.message().c_str());
+        }
+    };
 
     const int MAX_RETRIES = 5;
     int attempt = 0;
@@ -375,6 +388,7 @@ void MrymtNode::on_archive(
             std::ifstream ifs(compress_file);
             if (!ifs) {
                 RCLCPP_ERROR(get_logger(), "无法打开 COMPRESS.md");
+                revert_processing();
                 res->error_code = -3;
                 return;
             }
@@ -385,9 +399,10 @@ void MrymtNode::on_archive(
 
         std::string user_content;
         {
-            std::ifstream ifs(compressing_path);
+            std::ifstream ifs(processing_path);
             if (!ifs) {
-                RCLCPP_ERROR(get_logger(), "无法打开 .compressing 文件");
+                RCLCPP_ERROR(get_logger(), "无法打开 .processing 文件");
+                revert_processing();
                 res->error_code = -4;
                 return;
             }
@@ -400,7 +415,7 @@ void MrymtNode::on_archive(
         client.add_message({{"role", "system"}, {"content", sys_prompt}});
         client.add_message({{"role", "user"}, {"content", user_content}});
         nlohmann::json reply = client.call_api(false);
-        RCLCPP_INFO(get_logger(), "API 原始响应: %s", reply.dump().c_str());
+        RCLCPP_DEBUG(get_logger(), "API 原始响应: %s", reply.dump().c_str());
         std::string assistant_text;
         bool api_ok = false;
         if (reply.contains("choices") && reply["choices"].is_array() && !reply["choices"].empty()) {
@@ -415,6 +430,7 @@ void MrymtNode::on_archive(
         }
         if (!api_ok) {
             RCLCPP_ERROR(get_logger(), "大模型调用失败或返回格式错误");
+            revert_processing();
             res->error_code = -5;
             return;
         }
@@ -424,6 +440,7 @@ void MrymtNode::on_archive(
         fs::create_directories(diaries_dir, ec);
         if (ec) {
             RCLCPP_ERROR(get_logger(), "创建 diaries 目录失败");
+            revert_processing();
             res->error_code = -6;
             return;
         }
@@ -432,6 +449,7 @@ void MrymtNode::on_archive(
             std::ofstream ofs(diary_file, std::ios::app);
             if (!ofs) {
                 RCLCPP_ERROR(get_logger(), "打开日记文件失败");
+                revert_processing();
                 res->error_code = -7;
                 return;
             }
@@ -442,6 +460,7 @@ void MrymtNode::on_archive(
         git_repository *repo = nullptr;
         if (git_repository_open(&repo, repo_dir_.c_str()) != 0) {
             RCLCPP_ERROR(get_logger(), "打开仓库失败");
+            revert_processing();
             res->error_code = -8;
             return;
         }
@@ -450,6 +469,7 @@ void MrymtNode::on_archive(
         if (git_repository_index(&index, repo) != 0) {
             RCLCPP_ERROR(get_logger(), "获取 index 失败");
             git_repository_free(repo);
+            revert_processing();
             res->error_code = -9;
             return;
         }
@@ -460,6 +480,7 @@ void MrymtNode::on_archive(
             RCLCPP_ERROR(get_logger(), "git add 失败：%s", e ? e->message : "?");
             git_index_free(index);
             git_repository_free(repo);
+            revert_processing();
             res->error_code = -10;
             return;
         }
@@ -468,6 +489,7 @@ void MrymtNode::on_archive(
             RCLCPP_ERROR(get_logger(), "git index write 失败：%s", e ? e->message : "?");
             git_index_free(index);
             git_repository_free(repo);
+            revert_processing();
             res->error_code = -11;
             return;
         }
@@ -478,6 +500,7 @@ void MrymtNode::on_archive(
             RCLCPP_ERROR(get_logger(), "创建 tree 失败：%s", e ? e->message : "?");
             git_index_free(index);
             git_repository_free(repo);
+            revert_processing();
             res->error_code = -12;
             return;
         }
@@ -487,6 +510,7 @@ void MrymtNode::on_archive(
             RCLCPP_ERROR(get_logger(), "查找 tree 对象失败：%s", e ? e->message : "?");
             git_index_free(index);
             git_repository_free(repo);
+            revert_processing();
             res->error_code = -13;
             return;
         }
@@ -520,6 +544,7 @@ void MrymtNode::on_archive(
             const git_error *e = git_error_last();
             RCLCPP_ERROR(get_logger(), "git commit 失败：%s", e ? e->message : "?");
             git_repository_free(repo);
+            revert_processing();
             res->error_code = -14;
             return;
         }
@@ -528,13 +553,14 @@ void MrymtNode::on_archive(
         if (git_remote_lookup(&remote, repo, repo_name_.c_str()) != 0) {
             RCLCPP_ERROR(get_logger(), "查找远端 %s 失败", repo_name_.c_str());
             git_repository_free(repo);
+            revert_processing();
             res->error_code = -15;
             return;
         }
 
         std::string push_refspec = "refs/heads/" + repo_fork_ + ":refs/heads/" + repo_fork_;
         git_push_options push_opts = GIT_PUSH_OPTIONS_INIT;
-        push_opts.callbacks.credentials = ssh_cred_callback;  // 重要：推送也需要认证
+        push_opts.callbacks.credentials = ssh_cred_callback;
 
         char *refspecs[1] = { const_cast<char *>(push_refspec.c_str()) };
         git_strarray ref_array = { refspecs, 1 };
@@ -553,10 +579,12 @@ void MrymtNode::on_archive(
                                 push_err == GIT_ENONFASTFORWARD);
             if (is_conflict && attempt < MAX_RETRIES) {
                 RCLCPP_INFO(get_logger(), "检测到远程更新，重新拉取并重试...");
+                // 重新拉取后重试，但保留 .processing 文件不变
             } else {
                 RCLCPP_ERROR(get_logger(), "推送失败，不再重试");
                 git_remote_free(remote);
                 git_repository_free(repo);
+                revert_processing();
                 res->error_code = -16;
                 return;
             }
@@ -566,13 +594,25 @@ void MrymtNode::on_archive(
     }
 
     if (!success) {
+        // 如果重试耗尽仍未成功，恢复文件
+        revert_processing();
         res->error_code = -17;
         return;
     }
 
-    fs::remove(compressing_path, ec);
+    // 成功：将 .processing 重命名为 .json.done
+    std::string done_path = json_path + ".done";
+    fs::rename(processing_path, done_path, ec);
+    if (ec) {
+        RCLCPP_ERROR(get_logger(), "重命名为 .done 失败：%s", ec.message().c_str());
+        // 此时 .processing 仍存在，尝试恢复为原始文件
+        revert_processing();
+        res->error_code = -18;
+        return;
+    }
+
     res->error_code = 0;
-    RCLCPP_INFO(get_logger(), "memory_archive 完成");
+    RCLCPP_INFO(get_logger(), "memory_archive 完成，文件标记为 %s", done_path.c_str());
 }
 
 // =============================================================================

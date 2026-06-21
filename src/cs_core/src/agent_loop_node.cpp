@@ -272,7 +272,7 @@ private:
       auto req = std::make_shared<MemoryArchive::Request>();
       req->json_path = context_file_path_;
       auto future = archive_client_->async_send_request(req);
-      if (future.wait_for(5s) == std::future_status::ready) {
+      if (future.wait_for(180s) == std::future_status::ready) {
         auto resp = future.get();
         if (resp && resp->error_code == 0) {
           RCLCPP_INFO(this->get_logger(), "上下文归档成功");
