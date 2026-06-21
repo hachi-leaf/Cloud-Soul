@@ -312,6 +312,16 @@ private:
     std::string rule = load_rule_text();
     messages_.clear();
     messages_.push_back({{"role", "system"}, {"content", rule + "\n\n[对话摘要]\n" + summary}});
+    for (auto it = turns.rbegin(); it != turns.rend(); ++it) {
+        nlohmann::json user_msg;
+        user_msg["role"] = "user";
+        user_msg["content"] = it->first;
+        messages_.push_back(user_msg);
+        nlohmann::json asst_msg;
+        asst_msg["role"] = "assistant";
+        asst_msg["content"] = it->second;
+        messages_.push_back(asst_msg);
+    }
     RCLCPP_INFO(this->get_logger(), "上下文压缩完成，重新开始");
     save_context();
   }
