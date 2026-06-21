@@ -1,25 +1,73 @@
 cmake_minimum_required(VERSION 3.8)
 project(cs_core)
 
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
 endif()
 
-# find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(rclpy REQUIRED)
-find_package(std_msgs REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(cs_interfaces REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
-if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  # the following line skips the linter which checks for copyrights
-  # comment the line when a copyright and license is added to all source files
-  set(ament_cmake_copyright_FOUND TRUE)
-  # the following line skips cpplint (only works in a git repo)
-  # comment the line when this package is in a git repo and when
-  # a copyright and license is added to all source files
-  set(ament_cmake_cpplint_FOUND TRUE)
-  ament_lint_auto_find_test_dependencies()
-endif()
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBGIT2 REQUIRED libgit2)
+
+find_package(CURL REQUIRED)
+
+# ---------- mrymt_node ----------
+add_executable(mrymt_node
+  src/mrymt_node.cpp
+  src/call_openai.cpp
+)
+
+target_include_directories(mrymt_node PRIVATE
+  include
+  ${LIBGIT2_INCLUDE_DIRS}
+  ${CURL_INCLUDE_DIRS}
+)
+
+target_link_libraries(mrymt_node
+  rclcpp::rclcpp
+  ${LIBGIT2_LIBRARIES}
+  ${CURL_LIBRARIES}
+  nlohmann_json::nlohmann_json
+)
+
+ament_target_dependencies(mrymt_node cs_interfaces)
+
+install(TARGETS mrymt_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# ---------- agent_loop_node ----------
+add_executable(agent_loop_node
+  src/agent_loop_node.cpp
+  src/call_openai.cpp
+)
+
+target_include_directories(agent_loop_node PRIVATE
+  include
+  ${CURL_INCLUDE_DIRS}
+)
+
+target_link_libraries(agent_loop_node
+  rclcpp::rclcpp
+  rclcpp_action::rclcpp_action
+  ${CURL_LIBRARIES}
+  nlohmann_json::nlohmann_json
+)
+
+ament_target_dependencies(agent_loop_node cs_interfaces)
+
+install(TARGETS agent_loop_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# ---------- launch ----------
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_package()

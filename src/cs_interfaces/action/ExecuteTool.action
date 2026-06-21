@@ -1,0 +1,11 @@
+# Goal
+string input_json        # 工具调用请求的 JSON 字符串，格式：{"name": "xxx", "arguments": {...}}
+
+---
+# Result
+string output_json       # 工具执行结果 JSON 字符串
+int32 exit_code          # 0-成功，非0-失败（工具业务错误或系统错误）
+
+---
+# Feedback（本实现中不使用，但ROS2要求至少一个字段）
+string status
