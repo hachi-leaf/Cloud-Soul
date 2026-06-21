@@ -230,6 +230,11 @@ private:
       else if (c == '\n') escaped_output += "\\n";
       else if (c == '\r') escaped_output += "\\r";
       else if (c == '\t') escaped_output += "\\t";
+      else if (static_cast<unsigned char>(c) < 0x20) {
+        escaped_output += "\\u00";
+        escaped_output += "0123456789abcdef"[(c >> 4) & 0xf];
+        escaped_output += "0123456789abcdef"[c & 0xf];
+      }
       else escaped_output += c;
     }
 
