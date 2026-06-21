@@ -59,11 +59,11 @@ class ChatNode(Node):
         self.running = False
 
     def on_response(self, msg):
-        # 清除当前行后打印回复
-        sys.stdout.write("\r\033[K")  # 清除 ▸ prompt 行
-        print(f"{CYAN}{BOLD}Adam{RESET} {DIM}[{timestamp()}]{RESET}")
+        # 不破坏当前输入：在新行打印回复，然后重新显示提示符
+        print(f"\n{CYAN}{BOLD}Adam{RESET} {DIM}[{timestamp()}]{RESET}")
         print(f"  {msg.data}")
         print()
+        print(f"{BOLD}{YELLOW}▸ {RESET}", end="", flush=True)
 
     def show_help(self):
         print(f"""
@@ -73,8 +73,7 @@ class ChatNode(Node):
   Ctrl+C        退出
 
 {GREEN}提示:{RESET}
-  等待 {CYAN}Adam{RESET} 回复时，终端可能短暂无响应，正常现象。
-  回复会带时间戳，并在上方显示。
+  Adam 回复会带时间戳显示在上方，不影响你正在输入的内容。
 """)
 
 def main():

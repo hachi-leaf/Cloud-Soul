@@ -413,7 +413,15 @@ private:
       if (input_resp) {
         std::string snapshot = input_resp->snapshot_json;
         if (!snapshot.empty()) {
-          std::string cur_hash = std::to_string(std::hash<std::string>{}(snapshot));
+          // 仅对 user_command 部分做 hash，忽略 system_status 中变化的时间戳等
+          std::string hash_src = snapshot;
+          try {
+            auto j = nlohmann::json::parse(snapshot);
+            if (j.contains("user_command")) {
+              hash_src = j["user_command"].dump();
+            }
+          } catch (...) {}
+          std::string cur_hash = std::to_string(std::hash<std::string>{}(hash_src));
           if (cur_hash != last_snapshot_hash_) {
             last_snapshot_hash_ = cur_hash;
             messages_.push_back({{"role", "user"}, {"content", snapshot}});
