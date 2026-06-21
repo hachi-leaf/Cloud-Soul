@@ -55,6 +55,7 @@
 #include <mutex>
 #include <future>
 #include <algorithm>
+#include <functional>
 
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
@@ -412,9 +413,19 @@ private:
       if (input_resp) {
         std::string snapshot = input_resp->snapshot_json;
         if (!snapshot.empty()) {
-          messages_.push_back({{"role", "user"}, {"content", snapshot}});
-          RCLCPP_DEBUG(this->get_logger(), "添加输入快照到历史");
-          save_context();
+          std::string cur_hash = std::to_string(std::hash<std::string>{}(snapshot));
+          if (cur_hash != last_snapshot_hash_) {
+            last_snapshot_hash_ = cur_hash;
+            messages_.push_back({{"role", "user"}, {"content", snapshot}});
+            RCLCPP_DEBUG(this->get_logger(), "添加输入快照到历史");
+            save_context();
+          } else {
+            RCLCPP_DEBUG(this->get_logger(), "输入快照未变化，跳过本轮");
+            if (loop_rate_ <= 0.0) {
+              std::this_thread::sleep_for(1s);
+            }
+            continue;
+          }
         }
       }
 
@@ -496,6 +507,7 @@ private:
   rclcpp_action::Client<ExecuteTool>::SharedPtr action_client_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr response_pub_;
 
+  std::string last_snapshot_hash_;
   std::vector<nlohmann::json> messages_;
   std::thread loop_thread_;
 };
