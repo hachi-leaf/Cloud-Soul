@@ -326,23 +326,76 @@ private:
     save_context();
   }
 
-  // 清理字符串中的控制字符
+  // 清理字符串：过滤所有非法 JSON/UTF-8 字节
   static std::string sanitize_json_string(const std::string& s) {
+    static const char hex[] = "0123456789abcdef";
+    auto escape_byte = [](unsigned char b, std::string& out) {
+      out += "\\u00";
+      out += hex[(b >> 4) & 0xf];
+      out += hex[b & 0xf];
+    };
+    auto is_cont = [](unsigned char b) { return (b & 0xC0) == 0x80; };
+
     std::string out;
     out.reserve(s.size());
-    for (char c : s) {
-      if (static_cast<unsigned char>(c) < 0x20 && c != '\n' && c != '\r' && c != '\t') {
-        out += "\\u00";
-        out += "0123456789abcdef"[(c >> 4) & 0xf];
-        out += "0123456789abcdef"[c & 0xf];
+    size_t i = 0;
+    while (i < s.size()) {
+      unsigned char c = static_cast<unsigned char>(s[i]);
+      if (c < 0x20) {
+        if (c == '\n' || c == '\r' || c == '\t') {
+          out += static_cast<char>(c);
+        } else {
+          escape_byte(c, out);
+        }
+        i++;
+      } else if (c == 0x7F) {
+        escape_byte(c, out);
+        i++;
+      } else if (c < 0x80) {
+        out += static_cast<char>(c);
+        i++;
+      } else if (c >= 0xC2 && c <= 0xDF) {
+        if (i + 1 < s.size() && is_cont(static_cast<unsigned char>(s[i+1]))) {
+          out += static_cast<char>(c);
+          out += s[i+1];
+          i += 2;
+        } else {
+          escape_byte(c, out);
+          i++;
+        }
+      } else if (c >= 0xE0 && c <= 0xEF) {
+        if (i + 2 < s.size() &&
+            is_cont(static_cast<unsigned char>(s[i+1])) &&
+            is_cont(static_cast<unsigned char>(s[i+2]))) {
+          out += static_cast<char>(c);
+          out += s[i+1];
+          out += s[i+2];
+          i += 3;
+        } else {
+          escape_byte(c, out);
+          i++;
+        }
+      } else if (c >= 0xF0 && c <= 0xF4) {
+        if (i + 3 < s.size() &&
+            is_cont(static_cast<unsigned char>(s[i+1])) &&
+            is_cont(static_cast<unsigned char>(s[i+2])) &&
+            is_cont(static_cast<unsigned char>(s[i+3]))) {
+          out += static_cast<char>(c);
+          out += s[i+1];
+          out += s[i+2];
+          out += s[i+3];
+          i += 4;
+        } else {
+          escape_byte(c, out);
+          i++;
+        }
       } else {
-        out += c;
+        escape_byte(c, out);
+        i++;
       }
     }
     return out;
-  }
-
-  // 递归清理 nlohmann::json 对象中所有字符串值
+  }  // 递归清理 nlohmann::json 对象中所有字符串值
   static void sanitize_json_recursive(nlohmann::json& obj) {
     if (obj.is_string()) {
       obj = sanitize_json_string(obj.get<std::string>());
