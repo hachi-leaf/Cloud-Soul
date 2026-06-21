@@ -1,1 +1,40 @@
-# Cloud-Soul\n\n基于 ROS2 的 AI Agent 架构。提供 core-input-output 三层节点体系，支持多终端循环思考与云记忆同步。\n\n## 架构\n\n```\nCloud-Soul/\n├── cs_core/         # 核心：agent_loop_node（主循环）、mrymt_node（记忆管理）、call_openai（LLM 客户端）\n├── cs_input/        # 输入：input_mgmt、system_status、user_command\n├── cs_output/       # 输出：output_mgmt、file_read/write、shell_exec、user_notify\n└── cs_interfaces/   # 接口：ExecuteTool action + 4 个 service 定义\n```\n\n每个节点以 `agent_name` 为命名空间前缀，同一台机器可运行多个 Agent 实例。\n\n## 工作流\n\n1. **感知** — 采集系统状态 + 用户指令，生成输入快照\n2. **记忆召回** — 从 Git 仓库拉取 `RULE.md`，递归展开占位符，构建系统提示词\n3. **思考-行动循环** — LLM 推理，支持工具调用（shell/file/notify），结果回流至上下文\n4. **上下文压缩** — 超 token 阈值时 LLM 压缩对话，追加到日记文件，git 推送\n5. **持久化** — 上下文 JSON 文件支持断点恢复\n\n## 实例：Adam\n\n[Adam](https://github.com/hachi-leaf/Adam-Soul) 是运行在本架构上的 AI Agent 智能体，以 `agent_name=adam` 启动。其记忆/设定托管在 [Adam-Soul](https://github.com/hachi-leaf/Adam-Soul) 仓库。\n\n## 依赖\n\n- ROS2 Humble\n- libgit2（SSH 支持）\n- libcurl\n- nlohmann/json\n- DeepSeek / OpenAI 兼容 API\n
+# Cloud-Soul
+
+基于 ROS2 的 AI Agent 运行时框架。将 LLM 推理、工具调用、记忆管理与 Git 版本控制结合，实现可多终端部署、云记忆同步的智能体运行环境。
+
+## 解决的问题
+
+将 AI Agent 从单次对话升级为持续运行的服务：LLM 作为思考核心，ROS2 节点作为感知和行动层，Git 仓库作为跨终端记忆载体。重启不丢失上下文，多终端共享同一份记忆。
+
+## 架构
+
+cs_core/        核心：agent_loop_node、mrymt_node、call_openai
+cs_input/       感知：input_mgmt、system_status、user_command
+cs_output/      行动：output_mgmt、shell_exec、file_read/write、user_notify
+cs_interfaces/  契约：ExecuteTool.action + 4 个 service 定义
+
+节点以 agent_name 参数做命名空间隔离，单机可运行多个 Agent 实例。
+
+## 工作流
+
+1. 感知 - 采集系统状态与用户指令，生成输入快照
+2. 记忆召回 - 从 Git 仓库拉取 RULE.md，递归展开占位符
+3. 思考行动循环 - LLM 推理，按需调用工具，结果回流上下文
+4. 压缩归档 - 超 token 阈值时 LLM 压缩对话，日记追加到 Git 仓库
+5. 持久化恢复 - 上下文 JSON 文件，支持断点重启
+
+## 快速开始
+
+依赖: ROS2 Humble, libgit2, libcurl, nlohmann-json3
+
+```bash
+cd Cloud-Soul
+colcon build
+source install/setup.bash
+export OPENAI_API_KEY=sk-xxx
+ros2 launch cs_core cloud_soul.launch.py agent_name:=adam
+```
+
+## 实例
+
+Adam (github.com/hachi-leaf/Adam-Soul) 是本框架的运行实例，记忆托管在 Adam-Soul 仓库。
