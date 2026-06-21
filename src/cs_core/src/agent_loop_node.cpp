@@ -378,7 +378,9 @@ private:
     if (result.code != rclcpp_action::ResultCode::SUCCEEDED) {
       return {{"error", "工具执行失败"}};
     }
-    return nlohmann::json::parse(result.result->output_json);
+    std::string raw = result.result->output_json;
+    std::string sanitized = sanitize_json_string(raw);
+    return nlohmann::json::parse(sanitized);
   }
 
   nlohmann::json clean_message_for_api(const nlohmann::json& msg) {
