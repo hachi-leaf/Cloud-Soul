@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 import sys, threading, rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
