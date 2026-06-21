@@ -1,7 +1,22 @@
 #!/usr/bin/python3
+"""Cloud-Soul 终端对话客户端 - 美化版"""
 import sys, threading, rclpy
+from datetime import datetime, timezone
 from rclpy.node import Node
 from std_msgs.msg import String
+
+# ── ANSI 颜色 ──────────────────────────────────
+BOLD   = "\033[1m"
+DIM    = "\033[2m"
+GREEN  = "\033[92m"
+CYAN   = "\033[96m"
+YELLOW = "\033[93m"
+WHITE  = "\033[97m"
+GRAY   = "\033[90m"
+RESET  = "\033[0m"
+
+def timestamp():
+    return datetime.now(timezone.utc).strftime("%H:%M:%S")
 
 class ChatNode(Node):
     def __init__(self, agent_name="adam"):
@@ -10,26 +25,57 @@ class ChatNode(Node):
         self.pub = self.create_publisher(String, f"/{agent_name}/master_chat", 10)
         self.sub = self.create_subscription(String, f"/{agent_name}/response", self.on_response, 10)
         self.running = True
+
+        # 启动横幅
+        print(f"\n{GREEN}{BOLD}╭──────────────────────────────────────────╮{RESET}")
+        print(f"{GREEN}{BOLD}│{RESET}   Cloud-Soul Terminal Chat             {GREEN}{BOLD}│{RESET}")
+        print(f"{GREEN}{BOLD}│{RESET}   Agent: {CYAN}{agent_name:<31}{GREEN}{BOLD}│{RESET}")
+        print(f"{GREEN}{BOLD}│{RESET}   Ctrl+C 退出  /help 查看帮助          {GREEN}{BOLD}│{RESET}")
+        print(f"{GREEN}{BOLD}╰──────────────────────────────────────────╯{RESET}")
+        print()
+
         self.input_thread = threading.Thread(target=self.read_stdin, daemon=True)
         self.input_thread.start()
 
     def read_stdin(self):
         while self.running:
             try:
+                print(f"{BOLD}{YELLOW}▸ {RESET}", end="", flush=True)
                 line = sys.stdin.readline()
                 if not line:
                     break
                 line = line.strip()
-                if line:
-                    msg = String()
-                    msg.data = line
-                    self.pub.publish(msg)
+                if not line:
+                    continue
+                if line == "/help":
+                    self.show_help()
+                    continue
+                msg = String()
+                msg.data = line
+                self.pub.publish(msg)
+                print(f"{DIM}{GRAY}  [{timestamp()}] 已发送{RESET}")
             except (EOFError, KeyboardInterrupt):
                 break
         self.running = False
 
     def on_response(self, msg):
-        print(f"Adam: {msg.data}", flush=True)
+        # 清除当前行后打印回复
+        sys.stdout.write("\r\033[K")  # 清除 ▸ prompt 行
+        print(f"{CYAN}{BOLD}Adam{RESET} {DIM}[{timestamp()}]{RESET}")
+        print(f"  {msg.data}")
+        print()
+
+    def show_help(self):
+        print(f"""
+{GREEN}命令:{RESET}
+  直接输入文字  发送给 Agent
+  /help         显示此帮助
+  Ctrl+C        退出
+
+{GREEN}提示:{RESET}
+  等待 {CYAN}Adam{RESET} 回复时，终端可能短暂无响应，正常现象。
+  回复会带时间戳，并在上方显示。
+""")
 
 def main():
     rclpy.init()
@@ -43,6 +89,7 @@ def main():
         node.running = False
         node.destroy_node()
         rclpy.shutdown()
+        print(f"\n{GRAY}会话结束。{RESET}")
 
 if __name__ == "__main__":
     main()
