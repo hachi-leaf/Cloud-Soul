@@ -15,6 +15,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBGIT2 REQUIRED libgit2)
 
 find_package(CURL REQUIRED)
+find_package(std_msgs REQUIRED)
 
 # ---------- mrymt_node ----------
 add_executable(mrymt_node
@@ -59,7 +60,7 @@ target_link_libraries(agent_loop_node
   nlohmann_json::nlohmann_json
 )
 
-ament_target_dependencies(agent_loop_node cs_interfaces)
+ament_target_dependencies(agent_loop_node cs_interfaces std_msgs)
 
 install(TARGETS agent_loop_node
   DESTINATION lib/${PROJECT_NAME}
