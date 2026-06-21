@@ -62,7 +62,7 @@ public:
 private:
   void publish_info() {
     std_msgs::msg::String msg;
-    msg.data = R"(
+    msg.data = R"json(
       {
         "name": "file_write",
         "description": "将文本内容写入文件。可选择覆盖或追加模式。",
@@ -87,7 +87,7 @@ private:
           "required": ["path", "content"]
         }
       }
-    )";
+    )json";
     info_pub_->publish(msg);
   }
 
@@ -121,7 +121,6 @@ private:
       std::string dir = path.substr(0, last_slash);
       struct stat st;
       if (stat(dir.c_str(), &st) != 0) {
-        // 目录不存在，递归创建
         std::string cmd = "mkdir -p \"" + dir + "\"";
         if (system(cmd.c_str()) != 0) {
           result->output_json = R"({"error":"failed to create parent directory"})";
@@ -168,7 +167,28 @@ private:
       if (json[end] == '"' && (end == 0 || json[end-1] != '\\')) break;
       ++end;
     }
-    return json.substr(start, end - start);
+    return unescape_json(json.substr(start, end - start));
+  }
+
+  static std::string unescape_json(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+      if (s[i] == '\\' && i + 1 < s.size()) {
+        switch (s[i + 1]) {
+          case '"':  out += '"';  ++i; break;
+          case '\\': out += '\\'; ++i; break;
+          case '/':  out += '/';  ++i; break;
+          case 'n':  out += '\n'; ++i; break;
+          case 'r':  out += '\r'; ++i; break;
+          case 't':  out += '\t'; ++i; break;
+          default:   out += '\\'; break;
+        }
+      } else {
+        out += s[i];
+      }
+    }
+    return out;
   }
 
   std::string agent_name_;

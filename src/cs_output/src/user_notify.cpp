@@ -70,7 +70,6 @@ class UserNotifyNode : public rclcpp::Node {
 public:
   UserNotifyNode(const std::string & agent_name, const std::string & tool_name)
       : Node(tool_name), agent_name_(agent_name), tool_name_(tool_name) {
-    // 声明参数
     this->declare_parameter<std::string>("agent_name", agent_name);
     this->declare_parameter<double>("info_rate", 1.0);
     this->declare_parameter<std::string>("mail_recipient", "root@localhost");
@@ -78,7 +77,6 @@ public:
 
     double info_rate = this->get_parameter("info_rate").as_double();
 
-    // 动作服务器
     action_server_ = rclcpp_action::create_server<ExecuteTool>(
         this, "/" + agent_name_ + "/output/" + tool_name_,
         [](auto...) { return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE; },
@@ -89,20 +87,17 @@ public:
               .detach();
         });
 
-    // info 发布者 (Transient Local)
     rclcpp::QoS qos(1);
     qos.transient_local();
     qos.reliable();
     info_pub_ = this->create_publisher<std_msgs::msg::String>(
         "/" + agent_name_ + "/output/" + tool_name_ + "/info", qos);
 
-    // 定时发布 info
     publish_timer_ = this->create_wall_timer(
         std::chrono::duration<double>(1.0 / info_rate),
         [this]() { publish_info(); });
     publish_info();
 
-    // 注册可用的通知模式（以后扩展只需在这里添加）
     notify_funcs_["email"] = [this](const NotifyParams &params) -> bool {
       return notify_email(params);
     };
@@ -111,11 +106,9 @@ public:
   }
 
 private:
-  // 通知调用所需的统一参数结构（可扩展）
   struct NotifyParams {
     std::string message;
     std::string mode;
-    // 邮件相关
     std::string email_recipient;
     std::string email_subject;
   };
@@ -179,7 +172,6 @@ private:
       return;
     }
 
-    // 根据模式调用对应的通知函数
     auto it = notify_funcs_.find(params.mode);
     if (it == notify_funcs_.end()) {
       result->output_json = "{\"success\":false,\"error\":\"unsupported mode\"}";
@@ -198,19 +190,13 @@ private:
     goal_handle->succeed(result);
   }
 
-  // ---------- 具体通知实现 ----------
-
-  /// @brief 邮件通知，使用 s-nail 命令
-  /// @return true 成功发送，false 失败（含 s-nail 命令不可用）
   bool notify_email(const NotifyParams &params) {
-    // 检查 s-nail 命令是否存在
     if (system("command -v s-nail > /dev/null 2>&1") != 0) {
       RCLCPP_ERROR(this->get_logger(),
                    "s-nail 命令不可用，请先安装 s-nail 并配置 ~/.mailrc");
       return false;
     }
 
-    // 收件人：优先用请求中的，否则用节点参数
     std::string recipient = params.email_recipient.empty()
                                 ? this->get_parameter("mail_recipient").as_string()
                                 : params.email_recipient;
@@ -218,7 +204,6 @@ private:
                               ? this->get_parameter("mail_subject").as_string()
                               : params.email_subject;
 
-    // 构造 shell 命令，对消息内容进行单引号转义
     std::string escaped_message = escape_shell(params.message);
     std::string cmd = "echo '" + escaped_message + "' | s-nail -s '" +
                       escape_shell(subject) + "' " + recipient;
@@ -231,15 +216,6 @@ private:
     return true;
   }
 
-  // 未来扩展示例（桌面通知）
-  // bool notify_desktop(const NotifyParams &params) { ... }
-
-  // 未来扩展示例（飞书）
-  // bool notify_feishu(const NotifyParams &params) { ... }
-
-  // ---------- 工具函数 ----------
-
-  // 从简单 JSON 中提取字符串值
   static std::string extract_json_string(const std::string &json,
                                           const std::string &key) {
     std::string search = "\"" + key + "\":\"";
@@ -253,10 +229,30 @@ private:
         break;
       ++end;
     }
-    return json.substr(start, end - start);
+    return unescape_json(json.substr(start, end - start));
   }
 
-  // 转义 shell 单引号字符串
+  static std::string unescape_json(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+      if (s[i] == '\\' && i + 1 < s.size()) {
+        switch (s[i + 1]) {
+          case '"':  out += '"';  ++i; break;
+          case '\\': out += '\\'; ++i; break;
+          case '/':  out += '/';  ++i; break;
+          case 'n':  out += '\n'; ++i; break;
+          case 'r':  out += '\r'; ++i; break;
+          case 't':  out += '\t'; ++i; break;
+          default:   out += '\\'; break;
+        }
+      } else {
+        out += s[i];
+      }
+    }
+    return out;
+  }
+
   static std::string escape_shell(const std::string &s) {
     std::string out;
     for (char c : s) {
@@ -268,7 +264,6 @@ private:
     return out;
   }
 
-  // ---------- 成员变量 ----------
   std::string agent_name_;
   std::string tool_name_;
 
@@ -276,7 +271,6 @@ private:
   rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
   rclcpp::TimerBase::SharedPtr publish_timer_;
 
-  // 通知模式映射表（易于扩展）
   std::map<std::string, std::function<bool(const NotifyParams &)>> notify_funcs_;
 };
 

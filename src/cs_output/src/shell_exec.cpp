@@ -23,8 +23,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <signal.h>
-#include <sys/stat.h>   // for chmod
-#include <fcntl.h>      // for mkstemp
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -69,7 +69,7 @@ public:
 private:
   void publish_info() {
     std_msgs::msg::String msg;
-    msg.data = R"(
+    msg.data = R"json(
       {
         "name": "shell_exec",
         "description": "在子进程中执行 shell 命令。支持多行脚本，一次性执行并返回全部终端输出。",
@@ -89,7 +89,7 @@ private:
           "required": ["command"]
         }
       }
-    )";
+    )json";
     info_pub_->publish(msg);
   }
 
@@ -120,7 +120,7 @@ private:
       return;
     }
 
-    // 创建临时脚本文件 (使用 mkstemp)
+    // 创建临时脚本文件
     char temp_filename[] = "/tmp/cloudsoul_shell_exec_XXXXXX";
     int temp_fd = mkstemp(temp_filename);
     if (temp_fd == -1) {
@@ -130,7 +130,6 @@ private:
       return;
     }
 
-    // 写入命令
     std::string script = "#!/bin/sh\n" + command;
     if (write(temp_fd, script.c_str(), script.size()) != static_cast<ssize_t>(script.size())) {
       close(temp_fd);
@@ -150,7 +149,6 @@ private:
     int exit_code = -1;
     bool timed_out = false;
 
-    // 使用 fork + exec + 管道
     int pipefd[2];
     if (pipe(pipefd) != 0) {
       unlink(temp_filename);
@@ -172,27 +170,24 @@ private:
 
     if (pid == 0) {
       // 子进程
-      close(pipefd[0]);  // 关闭读端
+      close(pipefd[0]);
       dup2(pipefd[1], STDOUT_FILENO);
       dup2(pipefd[1], STDERR_FILENO);
       close(pipefd[1]);
       execl("/bin/sh", "sh", temp_filename, (char*)nullptr);
-      _exit(127);  // exec 失败
+      _exit(127);
     } else {
       // 父进程
-      close(pipefd[1]);  // 关闭写端
+      close(pipefd[1]);
 
       std::stringstream output_ss;
       char buffer[256];
       auto start_time = std::chrono::steady_clock::now();
 
-      // 使用 select 或非阻塞读，带超时
       while (true) {
-        // 检查子进程是否已结束
         int status;
         pid_t w = waitpid(pid, &status, WNOHANG);
         if (w == pid) {
-          // 子进程已退出，读取剩余输出
           while (true) {
             ssize_t count = read(pipefd[0], buffer, sizeof(buffer));
             if (count > 0) {
@@ -204,13 +199,11 @@ private:
           break;
         }
 
-        // 非阻塞读取一段输出
         ssize_t count = read(pipefd[0], buffer, sizeof(buffer));
         if (count > 0) {
           output_ss.write(buffer, count);
         }
 
-        // 检查超时
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
         if (elapsed >= timeout_ms) {
@@ -227,7 +220,6 @@ private:
       full_output = output_ss.str();
     }
 
-    // 删除临时文件
     unlink(temp_filename);
 
     // 构造输出 JSON
@@ -249,7 +241,7 @@ private:
     } else {
       output_json = "{\"stdout\":\"" + escaped_output + "\",\"exit_code\":" + std::to_string(exit_code) + "}";
       result->output_json = output_json;
-      result->exit_code = (exit_code == 0) ? 0 : -8;  // 非0退出码映射为工具失败
+      result->exit_code = (exit_code == 0) ? 0 : -8;
     }
 
     goal_handle->succeed(result);
@@ -265,7 +257,7 @@ private:
       if (json[end] == '"' && (end == 0 || json[end-1] != '\\')) break;
       ++end;
     }
-    return json.substr(start, end - start);
+    return unescape_json(json.substr(start, end - start));
   }
 
   static std::string extract_json_value(const std::string & json, const std::string & key) {
@@ -282,6 +274,27 @@ private:
       while (end < json.size() && json[end] != ',' && json[end] != '}') ++end;
       return json.substr(start, end - start);
     }
+  }
+
+  static std::string unescape_json(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+      if (s[i] == '\\' && i + 1 < s.size()) {
+        switch (s[i + 1]) {
+          case '"':  out += '"';  ++i; break;
+          case '\\': out += '\\'; ++i; break;
+          case '/':  out += '/';  ++i; break;
+          case 'n':  out += '\n'; ++i; break;
+          case 'r':  out += '\r'; ++i; break;
+          case 't':  out += '\t'; ++i; break;
+          default:   out += '\\'; break;
+        }
+      } else {
+        out += s[i];
+      }
+    }
+    return out;
   }
 
   std::string agent_name_;

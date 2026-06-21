@@ -76,9 +76,6 @@ public:
     this->declare_parameter<std::string>("openai_api_key", "");
     this->declare_parameter<std::string>("openai_model", "deepseek-v4-pro");
 
-    // 仅开启本节点的 DEBUG 日志，避免底层组件刷屏
-    this->get_logger().set_level(rclcpp::Logger::Level::Debug);
-
     agent_name_ = this->get_parameter("agent_name").as_string();
     if (agent_name_.empty()) {
       RCLCPP_FATAL(this->get_logger(), "agent_name 参数不能为空");
@@ -94,11 +91,13 @@ public:
     context_dir_ = raw_dir;
     if (!fs::exists(context_dir_)) fs::create_directories(context_dir_);
 
-    // 查找已有的上下文文件（必须包含 _agent_name.json）
+    // 锁定已有的上下文文件（后缀 _agent_name.json）
     context_file_path_ = find_context_file();
     if (context_file_path_.empty()) {
-      // 创建新文件：Z_YYYYMMDD_HHMMSS_<agent_name>.json
+      RCLCPP_INFO(this->get_logger(), "未找到已有上下文文件，将创建新文件");
       context_file_path_ = create_new_context_filename();
+    } else {
+      RCLCPP_INFO(this->get_logger(), "恢复上下文文件: %s", context_file_path_.c_str());
     }
 
     max_context_tokens_ = this->get_parameter("max_context_tokens").as_int();
@@ -136,8 +135,11 @@ private:
   // 查找目录下匹配 *_<agent_name>.json 的文件，返回最新修改的文件路径
   std::string find_context_file() {
     std::string found;
-    fs::file_time_type latest_ftime;
+    // 关键修复：初始化为最小值，确保任何文件的修改时间都更大
+    fs::file_time_type latest_ftime = fs::file_time_type::min();
     std::string suffix = "_" + agent_name_ + ".json";
+    RCLCPP_INFO(this->get_logger(), "在 %s 中查找后缀为 '%s' 的文件",
+                context_dir_.c_str(), suffix.c_str());
     for (const auto& entry : fs::directory_iterator(context_dir_)) {
       if (!entry.is_regular_file()) continue;
       std::string fname = entry.path().filename().string();
@@ -148,6 +150,11 @@ private:
         latest_ftime = ftime;
         found = entry.path().string();
       }
+    }
+    if (!found.empty()) {
+      RCLCPP_INFO(this->get_logger(), "找到上下文文件: %s", found.c_str());
+    } else {
+      RCLCPP_INFO(this->get_logger(), "目录中无匹配 %s 的文件", suffix.c_str());
     }
     return found;
   }
@@ -234,11 +241,11 @@ private:
       RCLCPP_ERROR(this->get_logger(), "无法写入上下文文件 %s", context_file_path_.c_str());
       return;
     }
-    // 每条消息紧凑一行，消息之间换行，整个数组合法
+    // 每条消息紧凑一行，消息之间换行
     ofs << "[\n";
     for (size_t i = 0; i < messages_.size(); ++i) {
       if (i > 0) ofs << ",\n";
-      ofs << messages_[i].dump();  // 紧凑单行
+      ofs << messages_[i].dump();
     }
     ofs << "\n]";
     ofs.close();
@@ -258,7 +265,7 @@ private:
     RCLCPP_INFO(this->get_logger(), "上下文 token 超限，开始压缩...");
     save_context();
 
-    // 归档固定文件
+    // 归档
     while (rclcpp::ok()) {
       auto req = std::make_shared<MemoryArchive::Request>();
       req->json_path = context_file_path_;
@@ -304,6 +311,37 @@ private:
     messages_.push_back({{"role", "system"}, {"content", rule + "\n\n[对话摘要]\n" + summary}});
     RCLCPP_INFO(this->get_logger(), "上下文压缩完成，重新开始");
     save_context();
+  }
+
+  // 清理字符串中的控制字符
+  static std::string sanitize_json_string(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+      if (static_cast<unsigned char>(c) < 0x20 && c != '\n' && c != '\r' && c != '\t') {
+        out += "\\u00";
+        out += "0123456789abcdef"[(c >> 4) & 0xf];
+        out += "0123456789abcdef"[c & 0xf];
+      } else {
+        out += c;
+      }
+    }
+    return out;
+  }
+
+  // 递归清理 nlohmann::json 对象中所有字符串值
+  static void sanitize_json_recursive(nlohmann::json& obj) {
+    if (obj.is_string()) {
+      obj = sanitize_json_string(obj.get<std::string>());
+    } else if (obj.is_array()) {
+      for (auto& item : obj) {
+        sanitize_json_recursive(item);
+      }
+    } else if (obj.is_object()) {
+      for (auto& [key, value] : obj.items()) {
+        sanitize_json_recursive(value);
+      }
+    }
   }
 
   nlohmann::json execute_tool(const std::string& tool_name, const std::string& arguments_json) {
@@ -397,6 +435,7 @@ private:
 
       while (rclcpp::ok()) {
         auto reply = call_llm_reliably(client, tools);
+        sanitize_json_recursive(reply);
         messages_.push_back(reply);
         client.add_message(reply);
         save_context();
@@ -414,6 +453,7 @@ private:
           RCLCPP_INFO(this->get_logger(), "调用工具: %s", func_name.c_str());
 
           nlohmann::json tool_result = execute_tool(func_name, arguments);
+          sanitize_json_recursive(tool_result);
           nlohmann::json tool_msg = {
             {"role", "tool"},
             {"tool_call_id", tool_id},
@@ -438,7 +478,7 @@ private:
 
   std::string agent_name_;
   std::string context_dir_;
-  std::string context_file_path_;  // 固定使用的上下文文件
+  std::string context_file_path_;
   int max_context_tokens_;
   int summary_turns_;
   double loop_rate_;
