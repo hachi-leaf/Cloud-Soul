@@ -36,6 +36,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include "std_msgs/msg/string.hpp"
 #include <cs_interfaces/srv/get_input_snapshot.hpp>
 #include <cs_interfaces/srv/get_tools_info.hpp>
 #include <cs_interfaces/srv/memory_recall.hpp>
@@ -122,6 +123,7 @@ public:
     recall_client_ = this->create_client<MemoryRecall>("/" + agent_name_ + "/memory_recall");
     archive_client_ = this->create_client<MemoryArchive>("/" + agent_name_ + "/memory_archive");
     action_client_ = rclcpp_action::create_client<ExecuteTool>(this, "/" + agent_name_ + "/output");
+    response_pub_ = this->create_publisher<std_msgs::msg::String>("/" + agent_name_ + "/response", 10);
 
     RCLCPP_INFO(this->get_logger(), "Agent 循环节点启动，agent: %s", agent_name_.c_str());
     loop_thread_ = std::thread(&AgentLoopNode::run_loop, this);
@@ -443,6 +445,7 @@ private:
         bool has_tool_calls = reply.contains("tool_calls") && !reply["tool_calls"].is_null() &&
                               reply["tool_calls"].is_array() && !reply["tool_calls"].empty();
         if (!has_tool_calls) {
+          if (reply.contains("content") && !reply["content"].is_null()) { auto msg = std_msgs::msg::String(); msg.data = reply["content"].get<std::string>(); response_pub_->publish(msg); }
           break;
         }
 
@@ -491,6 +494,7 @@ private:
   rclcpp::Client<MemoryRecall>::SharedPtr recall_client_;
   rclcpp::Client<MemoryArchive>::SharedPtr archive_client_;
   rclcpp_action::Client<ExecuteTool>::SharedPtr action_client_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr response_pub_;
 
   std::vector<nlohmann::json> messages_;
   std::thread loop_thread_;
