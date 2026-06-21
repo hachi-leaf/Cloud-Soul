@@ -1,1 +1,5 @@
-build/\ninstall/\nlog/\n*.bak\n"__pycache__/"
+build/
+install/
+log/
+*.bak
+__pycache__/
