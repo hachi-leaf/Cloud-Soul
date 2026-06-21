@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Cloud-Soul 终端对话客户端 - 美化版"""
+"""Cloud-Soul 终端对话客户端 - 回复积压不打断输入"""
 import sys, threading, rclpy
 from datetime import datetime, timezone
 from rclpy.node import Node
@@ -11,11 +11,10 @@ DIM    = "\033[2m"
 GREEN  = "\033[92m"
 CYAN   = "\033[96m"
 YELLOW = "\033[93m"
-WHITE  = "\033[97m"
 GRAY   = "\033[90m"
 RESET  = "\033[0m"
 
-def timestamp():
+def ts():
     return datetime.now(timezone.utc).strftime("%H:%M:%S")
 
 class ChatNode(Node):
@@ -24,9 +23,10 @@ class ChatNode(Node):
         self.agent = agent_name
         self.pub = self.create_publisher(String, f"/{agent_name}/master_chat", 10)
         self.sub = self.create_subscription(String, f"/{agent_name}/response", self.on_response, 10)
+        self.pending = []          # 积压的回复
+        self.lock = threading.Lock()
         self.running = True
 
-        # 启动横幅
         print(f"\n{GREEN}{BOLD}╭──────────────────────────────────────────╮{RESET}")
         print(f"{GREEN}{BOLD}│{RESET}   Cloud-Soul Terminal Chat             {GREEN}{BOLD}│{RESET}")
         print(f"{GREEN}{BOLD}│{RESET}   Agent: {CYAN}{agent_name:<31}{GREEN}{BOLD}│{RESET}")
@@ -37,6 +37,17 @@ class ChatNode(Node):
         self.input_thread = threading.Thread(target=self.read_stdin, daemon=True)
         self.input_thread.start()
 
+    def flush_pending(self):
+        """打印所有积压回复（在用户发送消息后调用）"""
+        with self.lock:
+            if not self.pending:
+                return
+            for content in self.pending:
+                print(f"\n{CYAN}{BOLD}Adam{RESET} {DIM}[{ts()}]{RESET}")
+                print(f"  {content}")
+                print()
+            self.pending.clear()
+
     def read_stdin(self):
         while self.running:
             try:
@@ -46,6 +57,7 @@ class ChatNode(Node):
                     break
                 line = line.strip()
                 if not line:
+                    self.flush_pending()  # 空行也刷积压
                     continue
                 if line == "/help":
                     self.show_help()
@@ -53,17 +65,16 @@ class ChatNode(Node):
                 msg = String()
                 msg.data = line
                 self.pub.publish(msg)
-                print(f"{DIM}{GRAY}  [{timestamp()}] 已发送{RESET}")
+                print(f"{DIM}{GRAY}  [{ts()}] 已发送{RESET}")
+                self.flush_pending()  # 发完消息后立即显示积压回复
             except (EOFError, KeyboardInterrupt):
                 break
         self.running = False
 
     def on_response(self, msg):
-        # 不破坏当前输入：在新行打印回复，然后重新显示提示符
-        print(f"\n{CYAN}{BOLD}Adam{RESET} {DIM}[{timestamp()}]{RESET}")
-        print(f"  {msg.data}")
-        print()
-        print(f"{BOLD}{YELLOW}▸ {RESET}", end="", flush=True)
+        """收到回复不打印，存入积压队列"""
+        with self.lock:
+            self.pending.append(msg.data)
 
     def show_help(self):
         print(f"""
@@ -71,9 +82,10 @@ class ChatNode(Node):
   直接输入文字  发送给 Agent
   /help         显示此帮助
   Ctrl+C        退出
+  空行          显示积压的回复
 
 {GREEN}提示:{RESET}
-  Adam 回复会带时间戳显示在上方，不影响你正在输入的内容。
+  Adam 的回复在你发送消息后才显示，不会打断你正在输入的内容。
 """)
 
 def main():
