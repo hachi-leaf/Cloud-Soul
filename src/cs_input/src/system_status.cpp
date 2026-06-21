@@ -85,7 +85,8 @@ private:
           "utc_time": "ISO8601 string",
           "gpu": "string (info or empty)",
           "hostname": "string",
-          "username": "string"
+          "username": "string",
+          "machine_id": "string"
         }
       }
     )json";
@@ -162,12 +163,19 @@ private:
     // 主机名
     char hostname[256];
     gethostname(hostname, sizeof(hostname));
+
+    // machine-id
+    std::string mid;
+    std::ifstream mid_file("/etc/machine-id");
+    if (mid_file) { std::getline(mid_file, mid); mid_file.close(); }
+    if (mid.empty()) mid = "unknown";
     json << "\"hostname\":\"" << hostname << "\",";
 
     // 用户名
     const char* user = std::getenv("USER");
     if (!user) user = "unknown";
-    json << "\"username\":\"" << user << "\"";
+    json << "\"username\":\"" << user << "\","
+         << "\"machine_id\":\"" << mid << "\"";
 
     json << "}";
     return json.str();

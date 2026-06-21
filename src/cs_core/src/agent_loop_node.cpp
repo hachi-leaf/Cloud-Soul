@@ -476,7 +476,7 @@ private:
         bool has_tool_calls = reply.contains("tool_calls") && !reply["tool_calls"].is_null() &&
                               reply["tool_calls"].is_array() && !reply["tool_calls"].empty();
         if (!has_tool_calls) {
-          if (reply.contains("content") && !reply["content"].is_null()) { auto msg = std_msgs::msg::String(); msg.data = reply["content"].get<std::string>(); response_pub_->publish(msg); }
+          // 不再自动发布 content。Agent 通过 user_notify 工具显式通知用户。
           break;
         }
 
@@ -496,6 +496,21 @@ private:
           messages_.push_back(tool_msg);
           client.add_message(tool_msg);
           save_context();
+
+          // user_notify 工具的消息同步发布到 /<agent_name>/response，
+          // 供 chat.py 和 server.py 等 output_src 订阅显示
+          if (func_name == "user_notify") {
+            try {
+              auto args = nlohmann::json::parse(arguments);
+              if (args.contains("message") && !args["message"].is_null()) {
+                auto msg = std_msgs::msg::String();
+                msg.data = args["message"].get<std::string>();
+                response_pub_->publish(msg);
+              }
+            } catch (const std::exception& e) {
+              RCLCPP_WARN(this->get_logger(), "解析 user_notify 参数失败: %s", e.what());
+            }
+          }
         }
       }
 
