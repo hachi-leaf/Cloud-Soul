@@ -19,7 +19,7 @@ import threading
 import queue
 import time
 
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, make_response
 
 import rclpy
 from rclpy.node import Node
@@ -106,7 +106,15 @@ def ros_spin():
 # ------- Flask 路由 -------
 @app.route('/')
 def index():
-    return make_html(AGENT_NAME)
+    resp = app.response_class(
+        response=make_html(AGENT_NAME),
+        status=200,
+        mimetype='text/html'
+    )
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 @app.route('/send', methods=['POST'])
