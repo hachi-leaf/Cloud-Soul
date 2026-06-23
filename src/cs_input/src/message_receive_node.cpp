@@ -17,6 +17,7 @@
 //   服务  /<agent_name>/input/message_receive/ros2_msg (SendMessage)
 //       请求: string message
 //       响应: bool success, string message
+//   服务  /<agent_name>/input/message_receive/web_chat (SendMessage)
 
 #include <chrono>
 #include <ctime>
@@ -56,10 +57,16 @@ public:
       "/" + agent_name_ + "/input/message_receive",
       rclcpp::QoS(1).reliable().transient_local());
 
-    // 服务: 接收原始消息
+    // 服务: ros2_msg 渠道
     ros2_msg_srv_ = this->create_service<SendMessage>(
       "/" + agent_name_ + "/input/message_receive/" + channel_name_,
       std::bind(&MessageReceiveNode::handle_ros2_msg, this,
+                std::placeholders::_1, std::placeholders::_2));
+
+    // 服务: web_chat 渠道
+    web_chat_srv_ = this->create_service<SendMessage>(
+      "/" + agent_name_ + "/input/message_receive/web_chat",
+      std::bind(&MessageReceiveNode::handle_web_chat, this,
                 std::placeholders::_1, std::placeholders::_2));
 
     // 心跳定时器
@@ -68,13 +75,13 @@ public:
       std::bind(&MessageReceiveNode::publish_info, this));
 
     publish_info();  // 立即发布一次 info，避免启动初期被管理节点判定超时
-    RCLCPP_INFO(this->get_logger(), "MessageReceiveNode ready, channel: %s", channel_name_.c_str());
+    RCLCPP_INFO(this->get_logger(), "MessageReceiveNode ready, channels: %s, web_chat", channel_name_.c_str());
   }
 
 private:
   void publish_info() {
     InputInfo msg;
-    msg.desc = channel_name_ + " 消息接收";
+    msg.desc = channel_name_ + " / web_chat 消息接收";
     msg.mode = "accumulate";
     info_pub_->publish(msg);
   }
@@ -82,8 +89,21 @@ private:
   void handle_ros2_msg(
       const std::shared_ptr<SendMessage::Request> req,
       std::shared_ptr<SendMessage::Response> res) {
+    handle_message(req, res, channel_name_);
+  }
+
+  void handle_web_chat(
+      const std::shared_ptr<SendMessage::Request> req,
+      std::shared_ptr<SendMessage::Response> res) {
+    handle_message(req, res, "web_chat");
+  }
+
+  void handle_message(
+      const std::shared_ptr<SendMessage::Request> req,
+      std::shared_ptr<SendMessage::Response> res,
+      const std::string & channel) {
     // 构造带前缀的消息
-    std::string prefixed = build_prefixed_message(req->message);
+    std::string prefixed = build_prefixed_message(req->message, channel);
     // 发布到 data 话题
     std_msgs::msg::String data_msg;
     data_msg.data = prefixed;
@@ -93,7 +113,7 @@ private:
     res->message = "消息已发送";
   }
 
-  std::string build_prefixed_message(const std::string & body) {
+  std::string build_prefixed_message(const std::string & body, const std::string & channel) {
     // 获取当前 UTC 时间
     std::time_t now = std::time(nullptr);
     std::tm *gmt = std::gmtime(&now);
@@ -101,7 +121,7 @@ private:
     std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%dT%H:%M:%SZ", gmt);
 
     std::ostringstream oss;
-    oss << "[" << time_buf << "+" << channel_name_ << "] " << body;
+    oss << "[" << time_buf << "+" << channel << "] " << body;
     return oss.str();
   }
 
@@ -111,6 +131,7 @@ private:
   rclcpp::Publisher<InputInfo>::SharedPtr info_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr data_pub_;
   rclcpp::Service<SendMessage>::SharedPtr ros2_msg_srv_;
+  rclcpp::Service<SendMessage>::SharedPtr web_chat_srv_;
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
 };
 

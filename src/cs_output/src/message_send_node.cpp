@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 节点: /<agent_name>/message_send_node (工具节点，由 output_mgmt_node 自动发现)
-// 作用: 消息发送器，支持多种渠道（邮件 / ROS 2 话题），可扩展飞书、微信等。
+// 作用: 消息发送器，支持多种渠道（邮件 / ROS 2 话题 / web_chat），可扩展飞书、微信等。
 //       邮件使用系统 s-nail 发送（依赖 ~/.mailrc 配置）。
 //       超时与取消由上层 output_mgmt_node 统一管理。
 //
@@ -39,10 +39,12 @@
 //   goal: input_json 示例:
 //     {"channel":"email","to":"someone@example.com","subject":"你好","body":"邮件内容"}
 //     {"channel":"ros_msg","message":"hello world"}
+//     {"channel":"web_chat","message":"hello web"}
 //   result: output_json 包含 status 或 error
 //
 // 话题: /<agent_name>/output/message_send/info (工具描述)
 //       /<agent_name>/output/message_send/<topic_output> (渠道为 ros_msg 时的输出)
+//       /<agent_name>/output/message_send/web_chat (渠道为 web_chat 时的输出)
 
 #include <atomic>
 #include <chrono>
@@ -109,9 +111,13 @@ public:
       [this]() { publish_info(); });
     publish_info();
 
-    // 话题输出发布者
+    // 话题输出发布者 (ros_msg 渠道)
     topic_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/" + agent_name_ + "/output/message_send/" + topic_output_, 10);
+
+    // web_chat 输出发布者
+    web_chat_pub_ = this->create_publisher<std_msgs::msg::String>(
+      "/" + agent_name_ + "/output/message_send/web_chat", 10);
 
     RCLCPP_INFO(this->get_logger(), "MessageSend node ready");
   }
@@ -126,19 +132,19 @@ private:
     msg.data = R"json(
       {
         "name": "message_send",
-        "description": "发送消息，支持 channel=email (需系统安装 s-nail 并配置 ~/.mailrc) 或 channel=ros_msg (ROS2 String 发布)。",
+        "description": "发送消息，支持 channel=email (需系统安装 s-nail 并配置 ~/.mailrc) 或 channel=ros_msg (ROS2 String 发布) 或 channel=web_chat (web 聊天)。",
         "parameters": {
           "type": "object",
           "properties": {
             "channel": {
               "type": "string",
-              "enum": ["email","ros_msg"],
+              "enum": ["email","ros_msg","web_chat"],
               "description": "消息渠道"
             },
             "to":         { "type": "string", "description": "收件人 (email 渠道)" },
             "subject":    { "type": "string", "description": "主题 (email 渠道)" },
             "body":       { "type": "string", "description": "邮件正文/消息内容" },
-            "message":    { "type": "string", "description": "消息内容 (ros_msg 渠道)" }
+            "message":    { "type": "string", "description": "消息内容 (ros_msg / web_chat 渠道)" }
           },
           "required": ["channel"]
         }
@@ -169,6 +175,8 @@ private:
       handle_email(input_json, result, goal_handle);
     } else if (channel == "ros_msg") {
       handle_topic(input_json, result, goal_handle);
+    } else if (channel == "web_chat") {
+      handle_web_chat(input_json, result, goal_handle);
     } else {
       result->output_json = R"EOF({"error":"unsupported channel"})EOF";
       result->exit_code = -2;
@@ -242,6 +250,29 @@ private:
     goal_handle->succeed(result);
   }
 
+  void handle_web_chat(const std::string & input_json,
+                       std::shared_ptr<ExecuteTool::Result> result,
+                       const std::shared_ptr<GoalHandleExecute> goal_handle) {
+    std::string message;
+    try {
+      message = extract_json_string(input_json, "message");
+      if (message.empty()) throw std::runtime_error("missing message");
+    } catch (...) {
+      result->output_json = R"EOF({"error":"invalid web_chat parameters"})EOF";
+      result->exit_code = -1;
+      goal_handle->abort(result);
+      return;
+    }
+
+    auto msg = std::make_unique<std_msgs::msg::String>();
+    msg->data = message;
+    web_chat_pub_->publish(std::move(msg));
+
+    result->output_json = R"EOF({"status":"published"})EOF";
+    result->exit_code = 0;
+    goal_handle->succeed(result);
+  }
+
   // ---------- JSON 辅助函数 ----------
   static std::string extract_json_string(const std::string & json, const std::string & key) {
     std::string search = "\"" + key + "\":\"";
@@ -295,6 +326,7 @@ private:
 
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr info_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr topic_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr web_chat_pub_;
   rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
   rclcpp::TimerBase::SharedPtr publish_timer_;
 
