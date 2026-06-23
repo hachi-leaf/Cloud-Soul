@@ -75,6 +75,7 @@ public:
     max_context_tokens_ = declare_parameter<int>("max_context_tokens", 200000);
     summary_turns_      = declare_parameter<int>("summary_turns", 30);
     loop_rate_          = declare_parameter<double>("loop_rate", 0.0);
+    tool_timeout_       = declare_parameter<double>("tool_timeout", 60.0);
     openai_base_url_    = declare_parameter<std::string>("openai_base_url", "https://api.deepseek.com");
     openai_api_key_     = declare_parameter<std::string>("openai_api_key", "");
     openai_model_       = declare_parameter<std::string>("openai_model", "deepseek-v4-pro");
@@ -352,7 +353,7 @@ private:
       return {{"error", "目标被拒绝"}};
     }
     auto result_future = action_client_->async_get_result(goal_handle);
-    if (result_future.wait_for(10s) != std::future_status::ready) {
+    if (result_future.wait_for(std::chrono::duration<double>(tool_timeout_)) != std::future_status::ready) {
       return {{"error", "工具执行超时"}};
     }
     auto result = result_future.get();
@@ -622,6 +623,7 @@ private:
   int max_context_tokens_;
   int summary_turns_;
   double loop_rate_;
+  double tool_timeout_;
   std::string openai_base_url_;
   std::string openai_api_key_;
   std::string openai_model_;

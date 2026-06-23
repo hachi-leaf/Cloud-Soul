@@ -59,6 +59,7 @@ while(INDEX LESS EXEC_COUNT)
     DESTINATION lib/${PROJECT_NAME})
 endwhile()
 
-# install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
+# ---------- launch ----------
+install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 ament_package()

@@ -16,8 +16,12 @@ import sys
 import json
 import argparse
 import threading
+import concurrent.futures
 import queue
 import time
+
+import signal
+import atexit
 
 from flask import Flask, request, jsonify, Response, make_response
 
@@ -83,12 +87,19 @@ class WebChatNode(Node):
         req = SendMessage.Request()
         req.message = message
         future = self.send_cli.call_async(req)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
-        if future.done() and future.result() is not None:
-            resp = future.result()
-            return {'success': resp.success, 'message': resp.message}
-        else:
+        event = threading.Event()
+        result = {'success': False, 'error': 'ROS2 服务超时'}
+        def callback(f):
+            if f.done() and f.result() is not None:
+                resp = f.result()
+                result['success'] = resp.success
+                result['message'] = resp.message
+                result.pop('error', None)
+            event.set()
+        future.add_done_callback(callback)
+        if not event.wait(timeout=5.0):
             return {'success': False, 'error': 'ROS2 服务超时'}
+        return result
 
 
 # ------- ROS2 线程 -------
@@ -144,10 +155,17 @@ def stream():
                              'X-Accel-Buffering': 'no'})
 
 
+def shutdown():
+    rclpy.shutdown()
+    # Flask 会自动停止
+
 if __name__ == '__main__':
     ros_thread = threading.Thread(target=ros_spin, daemon=True)
     ros_thread.start()
     time.sleep(2.0)
+
+    signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
+    atexit.register(shutdown)
 
     print('═══════════════════════════════════════════')
     print(f'  {AGENT_NAME} Web Chat 服务器已启动')

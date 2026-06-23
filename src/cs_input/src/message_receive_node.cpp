@@ -7,6 +7,7 @@
 //
 // 参数:
 //   agent_name - 命名空间，默认 "agent"
+//   ros_channel - ROS 消息渠道服务名后缀，默认 "ros2_msg"
 //   info_rate  - info 话题发布频率(Hz)，默认 1.0
 //
 // 对外接口 (遵循 input 模块规范):
@@ -42,8 +43,9 @@ public:
     this->declare_parameter<std::string>("agent_name", agent_name);
     this->declare_parameter<double>("info_rate", 1.0);
     double info_rate = this->get_parameter("info_rate").as_double();
+    this->declare_parameter<std::string>("ros_channel", "ros2_msg");
 
-    channel_name_ = "ros2_msg";   // 渠道名，与服务最后一级一致
+    channel_name_ = this->get_parameter("ros_channel").as_string();  // 渠道名，可配置，与服务最后一级一致
 
     // info 话题 (描述 + 心跳 + mode)
     rclcpp::QoS info_qos(1);

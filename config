@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""
+config — Cloud-Soul 首次配置向导
+用法: ./config
+"""
+
+import os
+import sys
+
+
+# ═══════════════════════════════════════════════════════════════
+#  ANSI 颜色
+# ═══════════════════════════════════════════════════════════════
+C_RESET   = "\033[0m"
+C_BOLD    = "\033[1m"
+C_DIM     = "\033[2m"
+C_CYAN    = "\033[96m"
+C_GREEN   = "\033[92m"
+C_YELLOW  = "\033[93m"
+C_RED     = "\033[91m"
+
+# 主题色标记（终端环境，不用 Markdown）
+T = C_CYAN       # 标题 / 步骤名
+H = C_YELLOW     # 高亮输入项
+D = C_DIM        # 说明文字
+OK = C_GREEN     # 成功
+ER = C_RED       # 错误
+
+
+# ═══════════════════════════════════════════════════════════════
+#  交互工具
+# ═══════════════════════════════════════════════════════════════
+def ask(prompt, default=None, required=False):
+    while True:
+        if default is not None:
+            p = f"  {H}▸ {prompt}{C_RESET} {D}[{default}]{C_RESET}: "
+        else:
+            p = f"  {H}▸ {prompt}{C_RESET}: "
+        val = input(p).strip()
+        if val == "":
+            if default is not None:
+                return default
+            if required:
+                print(f"    {ER}⚠ 此项为必填{C_RESET}")
+                continue
+            return ""
+        return val
+
+def ask_confirm(prompt, default="Y"):
+    yn = "Y/n" if default == "Y" else "y/N"
+    v = input(f"  {H}▸ {prompt}{C_RESET} {D}[{yn}]{C_RESET}: ").strip().lower()
+    if v == "":
+        return default == "Y"
+    return v in ("y", "yes")
+
+def step_title(n, text):
+    print()
+    print(f"  {T}[{n}/4]{C_RESET}  {T}{C_BOLD}{text}{C_RESET}")
+    print(f"  {T}{'─' * 50}{C_RESET}")
+
+def print_banner():
+    print()
+    print(f"  {T}╔══════════════════════════════════════════════╗{C_RESET}")
+    print(f"  {T}║            Cloud-Soul  首次配置向导          ║{C_RESET}")
+    print(f"  {T}╚══════════════════════════════════════════════╝{C_RESET}")
+    print()
+
+def print_done(config_path):
+    print()
+    print(f"  {OK}╔══════════════════════════════════════════════╗{C_RESET}")
+    print(f"  {OK}║  ✅  配置已保存                              ║{C_RESET}")
+    print(f"  {OK}╚══════════════════════════════════════════════╝{C_RESET}")
+    print(f"  {D}配置文件: {config_path}{C_RESET}")
+    print()
+
+# ═══════════════════════════════════════════════════════════════
+#  主流程
+# ═══════════════════════════════════════════════════════════════
+def main():
+    print_banner()
+
+    # ── Step 1 ──
+    step_title(1, "配置根目录")
+    print(f"  {D}存放 contexts（上下文）和 soul（云端记忆）{C_RESET}")
+    config_dir = ask("根目录路径", default="~/.cloudsoul")
+    config_dir = os.path.expanduser(config_dir)
+    contexts_dir = os.path.join(config_dir, "contexts")
+    soul_dir = os.path.join(config_dir, "soul")
+    os.makedirs(contexts_dir, exist_ok=True)
+    os.makedirs(soul_dir, exist_ok=True)
+    print(f"    {OK}✓{C_RESET} {contexts_dir}/")
+    print(f"    {OK}✓{C_RESET} {soul_dir}/")
+
+    # ── Step 2 ──
+    step_title(2, "Agent 与记忆仓库")
+    agent_name = ask("Agent 名称", required=True)
+    print(f"    {D}→ ROS2 namespace: /{agent_name}/xxx{C_RESET}")
+    repo_url = ask("记忆仓库 URL (https:// 或 git@)", required=True)
+    repo_fork = ask("分支", default="main")
+    rule_path = ask("规则文件路径（相对于仓库根目录）", default="prompts/RULE.md")
+
+    # ── Step 3 ──
+    step_title(3, "大模型接口")
+    llms = []
+    while True:
+        idx = len(llms) + 1
+        print(f"  {T}▶ LLM #{idx}{C_RESET}")
+        name = ask("名称（助记，如 \"DeepSeek\"）", required=True)
+        base_url = ask("API 地址", required=True)
+        api_key = ask("API Key", required=True)
+        model = ask("模型", required=True)
+        llms.append({
+            "name": name,
+            "base_url": base_url,
+            "api_key": api_key,
+            "model": model,
+        })
+        if not ask_confirm("继续添加？", default="N"):
+            break
+
+    if len(llms) == 1:
+        default_llm = llms[0]["name"]
+    else:
+        names = [l["name"] for l in llms]
+        default_llm = ask(f"默认 LLM {names}", default=llms[0]["name"])
+
+    # ── Step 4 ──
+    step_title(4, "参数确认 — 回车使用默认值即可")
+
+    print(f"  {T}▶ 核心参数{C_RESET}")
+    max_ctx = int(ask("max_context_tokens   上下文压缩阈值",
+                       default="200000"))
+    summary = int(ask("summary_turns         压缩保留最近 N 轮",
+                       default="30"))
+    timeout = float(ask("tool_timeout          工具调用超时 (秒)",
+                         default="60.0"))
+
+    # Input
+    print()
+    input_params = {
+        "info_timeout": 3.0,
+        "discovery_period": 1.0,
+        "system_status_rate": 1.0,
+        "message_receive_rate": 1.0,
+        "ros_channel": "ros2_msg",
+    }
+    if ask_confirm("配置 Input 管道参数？（可跳过）", default="N"):
+        print(f"  {T}▶ Input 管道{C_RESET}")
+        input_params["info_timeout"] = float(
+            ask("info_timeout          子节点心跳超时 (秒)", default="3.0"))
+        input_params["discovery_period"] = float(
+            ask("discovery_period      发现扫描间隔 (秒)", default="1.0"))
+        input_params["system_status_rate"] = float(
+            ask("system_status_rate    系统状态上报频率 (Hz)", default="1.0"))
+        input_params["message_receive_rate"] = float(
+            ask("message_receive_rate  消息接收心跳频率 (Hz)", default="1.0"))
+        input_params["ros_channel"] = ask(
+            "ros_channel           ROS 消息渠道名称", default="ros2_msg")
+    else:
+        print(f"    {D}⏭ 已跳过，使用默认值{C_RESET}")
+
+    # Output
+    print()
+    output_params = {
+        "info_timeout": 3.0,
+        "discovery_period": 1.0,
+        "tool_info_period": 1.0,
+        "message_topic": "raw_message",
+    }
+    if ask_confirm("配置 Output 管道参数？（可跳过）", default="N"):
+        print(f"  {T}▶ Output 管道{C_RESET}")
+        output_params["info_timeout"] = float(
+            ask("info_timeout          子节点心跳超时 (秒)", default="3.0"))
+        output_params["discovery_period"] = float(
+            ask("discovery_period      发现扫描间隔 (秒)", default="1.0"))
+        output_params["tool_info_period"] = float(
+            ask("tool_info_period      工具心跳周期 (秒)", default="1.0"))
+        output_params["message_topic"] = ask(
+            "message_topic         message_send 输出 topic", default="raw_message")
+    else:
+        print(f"    {D}⏭ 已跳过，使用默认值{C_RESET}")
+
+    # ═══════════════════════════════════════════════════════════
+    #  写入配置
+    # ═══════════════════════════════════════════════════════════
+    config = {
+        "agent_name": agent_name,
+        "config_dir": config_dir,
+        "context_dir": contexts_dir,
+        "soul_dir": soul_dir,
+        "default_llm": default_llm,
+        "llms": llms,
+        "repo": {
+            "url": repo_url,
+            "name": "origin",
+            "fork": repo_fork,
+            "rule_path": rule_path,
+        },
+        "loop": {
+            "max_context_tokens": max_ctx,
+            "summary_turns": summary,
+            "tool_timeout": timeout,
+        },
+        "input": input_params,
+        "output": output_params,
+    }
+
+    # 摘要
+    print()
+    print(f"  {T}── 配置摘要 ──{C_RESET}")
+    print(f"  Agent:     {H}{agent_name}{C_RESET}")
+    print(f"  根目录:    {config_dir}")
+    print(f"  仓库:      {repo_url}")
+    print(f"  默认 LLM:  {H}{default_llm}{C_RESET} ({len(llms)} 个接口)")
+    print(f"  上下文:    {max_ctx} tokens / 保留 {summary} 轮")
+    print(f"  工具超时:  {timeout}s")
+    print(f"  Input:     info_timeout={input_params['info_timeout']}s "
+          f"ros_channel={input_params['ros_channel']}")
+    print(f"  Output:    info_timeout={output_params['info_timeout']}s "
+          f"topic={output_params['message_topic']}")
+
+    print()
+    if not ask_confirm("确认写入 config.yaml？", default="Y"):
+        print(f"  {ER}已取消{C_RESET}")
+        return
+
+    config_path = os.path.join(config_dir, "config.yaml")
+    try:
+        import yaml
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(config, f, allow_unicode=True,
+                      default_flow_style=False, sort_keys=False)
+    except ImportError:
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write(f"agent_name: {agent_name}\n")
+            f.write(f"config_dir: {config_dir}\n")
+            f.write(f"context_dir: {contexts_dir}\n")
+            f.write(f"soul_dir: {soul_dir}\n")
+            f.write(f"default_llm: {default_llm}\n")
+            f.write("llms:\n")
+            for llm in llms:
+                f.write(f"  - name: {llm['name']}\n")
+                f.write(f"    base_url: {llm['base_url']}\n")
+                f.write(f"    api_key: {llm['api_key']}\n")
+                f.write(f"    model: {llm['model']}\n")
+            f.write("repo:\n")
+            f.write(f"  url: {repo_url}\n")
+            f.write(f"  name: origin\n")
+            f.write(f"  fork: {repo_fork}\n")
+            f.write(f"  rule_path: {rule_path}\n")
+            f.write("loop:\n")
+            f.write(f"  max_context_tokens: {max_ctx}\n")
+            f.write(f"  summary_turns: {summary}\n")
+            f.write(f"  tool_timeout: {timeout}\n")
+            for section, params in [("input", input_params), ("output", output_params)]:
+                f.write(f"{section}:\n")
+                for k, v in params.items():
+                    if isinstance(v, str):
+                        f.write(f"  {k}: {v}\n")
+                    else:
+                        f.write(f"  {k}: {v}\n")
+
+    print_done(config_path)
+
+
+if __name__ == "__main__":
+    main()

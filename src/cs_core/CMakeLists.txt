@@ -70,4 +70,7 @@ install(TARGETS agent_loop_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# ---------- launch ----------
+install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
+
 ament_package()

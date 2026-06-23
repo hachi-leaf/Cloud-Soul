@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+# TODO: 守护进程 — web_chat crash 后自动重启 (while loop + sleep)
+# TODO: web_chat 端口可配置化 (从 config.yaml 读取)
+# TODO: 日志轮转 — 避免 /tmp 长期堆积
+# TODO: config.yaml 路径写入环境文件，start 自动发现
+# ============================================================
+# start — Cloud-Soul 启动脚本
+# 读取 config.yaml，依次启动 cs_input / cs_output / cs_core
+#
+# 用法: ./start [config_path]
+#       默认读取 ~/.cloudsoul/config.yaml
+# ============================================================
+set -euo pipefail
+
+# ── 定位 Cloud-Soul 安装目录 ──
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── 配置文件 ──
+CONFIG_FILE="${1:-$HOME/.cloudsoul/config.yaml}"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "❌ 找不到配置文件: $CONFIG_FILE"
+    echo "   请先运行 ./config 进行首次配置"
+    exit 1
+fi
+
+echo "📄 读取配置: $CONFIG_FILE"
+
+# ── 解析 YAML 的简易函数 ──
+yaml_get() {
+    python3 -c "
+import sys,yaml
+with open('$CONFIG_FILE') as f:
+    d = yaml.safe_load(f)
+keys = '$1'.split('.')
+for k in keys:
+    if isinstance(d, dict) and k in d:
+        d = d[k]
+    else:
+        sys.exit(1)
+print(d)
+" 2>/dev/null || echo ""
+}
+
+# ── 查找默认 LLM ──
+get_default_llm() {
+    local field="$1"
+    local default_name
+    default_name=$(yaml_get "default_llm")
+    python3 -c "
+import sys,yaml
+with open('$CONFIG_FILE') as f:
+    d = yaml.safe_load(f)
+default_name = '$default_name'
+for llm in d.get('llms', []):
+    if llm['name'] == default_name:
+        print(llm.get('$field', ''))
+        sys.exit(0)
+sys.exit(1)
+" 2>/dev/null || echo ""
+}
+
+# ═══════════════════════════════════════════════════════
+#  提取参数
+# ═══════════════════════════════════════════════════════
+AGENT_NAME=$(yaml_get "agent_name")
+if [ -z "$AGENT_NAME" ]; then
+    echo "❌ config.yaml 中未找到 agent_name"
+    exit 1
+fi
+
+SOUL_DIR=$(yaml_get "soul_dir")
+CONTEXT_DIR=$(yaml_get "context_dir")
+
+REPO_URL=$(yaml_get "repo.url")
+REPO_NAME=$(yaml_get "repo.name")
+REPO_FORK=$(yaml_get "repo.fork")
+RULE_PATH=$(yaml_get "repo.rule_path")
+
+MAX_CTX=$(yaml_get "loop.max_context_tokens")
+SUMMARY=$(yaml_get "loop.summary_turns")
+TOOL_TIMEOUT=$(yaml_get "loop.tool_timeout")
+
+LLM_URL=$(get_default_llm "base_url")
+LLM_KEY=$(get_default_llm "api_key")
+LLM_MODEL=$(get_default_llm "model")
+
+INFO_TIMEOUT_IN=$(yaml_get "input.info_timeout")
+DISCOVERY_IN=$(yaml_get "input.discovery_period")
+SYS_STATUS_RATE=$(yaml_get "input.system_status_rate")
+MSG_RECV_RATE=$(yaml_get "input.message_receive_rate")
+ROS_CHANNEL=$(yaml_get "input.ros_channel")
+
+INFO_PERIOD_OUT=$(yaml_get "output.tool_info_period")
+INFO_TIMEOUT_OUT=$(yaml_get "output.info_timeout")
+DISCOVERY_OUT=$(yaml_get "output.discovery_period")
+MSG_TOPIC=$(yaml_get "output.message_topic")
+
+echo "  Agent: $AGENT_NAME"
+echo "  LLM:   $LLM_MODEL"
+echo "  Repo:  $REPO_URL"
+echo ""
+
+# ═══════════════════════════════════════════════════════
+#  加载 ROS2 环境
+# ═══════════════════════════════════════════════════════
+if [ -f /opt/ros/humble/setup.bash ]; then
+    set +u
+    source /opt/ros/humble/setup.bash
+    set -u
+else
+    echo "❌ 找不到 ROS2 humble setup"
+    exit 1
+fi
+
+if [ -f "$SCRIPT_DIR/install/setup.bash" ]; then
+    set +u
+    source "$SCRIPT_DIR/install/setup.bash"
+    set -u
+else
+    echo "❌ 找不到 Cloud-Soul install/setup.bash，请先 colcon build"
+    exit 1
+fi
+
+# ═══════════════════════════════════════════════════════
+#  清理函数（启动前 & 退出时都用）
+# ═══════════════════════════════════════════════════════
+WEB_CHAT_PORT=8080   # 提前定义，保证 force_cleanup 里能用
+
+force_cleanup() {
+    echo "🧹 强力清理 ..."
+    # 1. 常规 pkill（找不到进程也不报错）
+    pkill -f "agent_name:=$AGENT_NAME" 2>/dev/null || true
+    pkill -f "web_chat_server.py" 2>/dev/null || true
+
+    # 2. 按端口杀 web_chat（保底）
+    if command -v lsof &>/dev/null; then
+        # 注意：lsof 找不到进程时会返回非零，必须加 || true
+        local pids
+        pids=$(lsof -t -i:${WEB_CHAT_PORT} 2>/dev/null || true)
+        [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+    fi
+
+    # 3. 杀残留的 ros2 进程（安全备用）
+    pkill -f "ros2.*$AGENT_NAME" 2>/dev/null || true
+
+    sleep 0.5
+}
+
+# ═══════════════════════════════════════════════════════
+#  启动前清理旧进程
+# ═══════════════════════════════════════════════════════
+echo "🧹 清理旧的 $AGENT_NAME 进程..."
+force_cleanup
+
+# ═══════════════════════════════════════════════════════
+#  启动 cs_input
+# ═══════════════════════════════════════════════════════
+echo "🚀 启动 cs_input ..."
+ros2 launch cs_input cs_input.launch.py \
+    agent_name:="$AGENT_NAME" \
+    info_timeout:="$INFO_TIMEOUT_IN" \
+    discovery_period:="$DISCOVERY_IN" \
+    info_rate:="$MSG_RECV_RATE" \
+    publish_rate:="$SYS_STATUS_RATE" \
+    ros_channel:="$ROS_CHANNEL" \
+    &> /tmp/cloudsoul_cs_input.log &
+INPUT_PID=$!
+echo "   PID: $INPUT_PID"
+
+# ═══════════════════════════════════════════════════════
+#  启动 cs_output
+# ═══════════════════════════════════════════════════════
+echo "🚀 启动 cs_output ..."
+ros2 launch cs_output cs_output.launch.py \
+    agent_name:="$AGENT_NAME" \
+    info_period:="$INFO_PERIOD_OUT" \
+    tool_timeout:="$TOOL_TIMEOUT" \
+    info_timeout:="$INFO_TIMEOUT_OUT" \
+    discovery_period:="$DISCOVERY_OUT" \
+    topic_output:="$MSG_TOPIC" \
+    &> /tmp/cloudsoul_cs_output.log &
+OUTPUT_PID=$!
+echo "   PID: $OUTPUT_PID"
+
+# ═══════════════════════════════════════════════════════
+#  启动 cs_core
+# ═══════════════════════════════════════════════════════
+echo "🚀 启动 cs_core ..."
+ros2 launch cs_core cs_core.launch.py \
+    agent_name:="$AGENT_NAME" \
+    repo_url:="$REPO_URL" \
+    repo_name:="$REPO_NAME" \
+    repo_fork:="$REPO_FORK" \
+    repo_dir:="$SOUL_DIR" \
+    rule_path:="$RULE_PATH" \
+    context_dir:="$CONTEXT_DIR" \
+    max_context_tokens:="$MAX_CTX" \
+    summary_turns:="$SUMMARY" \
+    tool_timeout:="$TOOL_TIMEOUT" \
+    openai_base_url:="$LLM_URL" \
+    openai_api_key:="$LLM_KEY" \
+    openai_model:="$LLM_MODEL" \
+    &> /tmp/cloudsoul_cs_core.log &
+CORE_PID=$!
+echo "   PID: $CORE_PID"
+
+# ═══════════════════════════════════════════════════════
+#  启动 web_chat
+# ═══════════════════════════════════════════════════════
+WEB_CHAT_SCRIPT="$SCRIPT_DIR/scripts/web_chat_server.py"
+
+# 再次确保端口释放（精确杀，找不到进程也不报错）
+if command -v lsof &>/dev/null; then
+    pids=""
+    pids=$(lsof -t -i:${WEB_CHAT_PORT} 2>/dev/null || true)
+    [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+fi
+# 等待端口彻底关闭
+for i in $(seq 1 20); do
+  if ! lsof -t -i:${WEB_CHAT_PORT} >/dev/null 2>&1; then break; fi
+  sleep 0.5
+done
+
+echo "🚀 启动 web_chat (port $WEB_CHAT_PORT)..."
+if [ -f "$WEB_CHAT_SCRIPT" ]; then
+    python3 "$WEB_CHAT_SCRIPT" --agent "$AGENT_NAME" --port "$WEB_CHAT_PORT" \
+        &> /tmp/cloudsoul_web_chat.log &
+    WEB_PID=$!
+    echo "   PID: $WEB_PID"
+else
+    echo "   ⚠  web_chat_server.py 未找到，跳过"
+    WEB_PID=""
+fi
+
+# ═══════════════════════════════════════════════════════
+#  等待并显示状态
+# ═══════════════════════════════════════════════════════
+echo ""
+echo "⏳ 等待节点上线 ..."
+sleep 3
+
+echo ""
+echo "═══ 节点状态 ═══"
+ros2 node list 2>/dev/null | grep "$AGENT_NAME" | sort || echo "  (暂无)"
+
+echo ""
+echo "═══ 日志 ═══"
+echo "  Input:   /tmp/cloudsoul_cs_input.log"
+echo "  Output:  /tmp/cloudsoul_cs_output.log"
+echo "  Core:    /tmp/cloudsoul_cs_core.log"
+echo "  Web:     /tmp/cloudsoul_web_chat.log"
+echo ""
+echo "🌐 Web Chat: http://localhost:$WEB_CHAT_PORT"
+echo ""
+echo "按 Ctrl+C 停止所有节点"
+echo ""
+
+# 捕获信号，清理后台进程（退出时也强力清理）
+cleanup() {
+    echo ""
+    echo "🛑 正在停止 ..."
+    # 先杀记录的 PID
+    kill $INPUT_PID $OUTPUT_PID $CORE_PID 2>/dev/null || true
+    [ -n "$WEB_PID" ] && kill "$WEB_PID" 2>/dev/null || true
+    wait 2>/dev/null || true
+
+    # 再全局强力清理，确保没有漏网之鱼
+    force_cleanup
+
+    # 重启 daemon，避免 xmlrpc 错误
+    ros2 daemon stop 2>/dev/null || true
+    ros2 daemon start 2>/dev/null || true
+    echo "✅ 已停止"
+}
+trap cleanup INT TERM
+
+# 阻塞等待
+wait
