@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: MIT
 
 // =============================================================================
-// 节点: <agent_name>_agent_loop
+// 节点: /<agent_name>/agent_loop
 // 作用: Agent 主循环，执行感知 -> 决策 -> 行动 的闭环。
 //
 // 架构简述:
 // 1. 初始化：等待依赖服务上线，加载记忆系统提示词，恢复或创建上下文。
 // 2. 主循环（若 loop_rate=0 则连续循环，否则按频率触发）：
-//    a. 获取输入快照（GetInputSnapshot），作为 user 消息加入历史，立即保存上下文。
+//    a. 获取输入快照（GetSnapshot），作为 user 消息加入历史，立即保存上下文。
 //    b. 获取可用工具列表（GetToolsInfo）。
 //    c. 思考-工具调用小循环：调用 LLM，无限重试直至成功。
 //       - 若返回 tool_calls：执行工具（通过 /agent_name/output 动作），
@@ -17,7 +17,8 @@
 //    d. 检查上下文 token 数，若超过 max_context_tokens 则触发压缩：
 //       - 保存当前完整上下文为 JSON 文件。
 //       - 调用 memory_archive 归档（失败则反复重试）。
-//       - 提取最后 summary_turns 轮对话生成摘要，重新获取系统提示词，重建上下文，立即保存。
+//       - 提取最后 summary_turns 轮完整对话（含工具调用）生成摘要，
+//         重新获取系统提示词，重建上下文，并创建新的上下文文件名。
 //    e. 持久化当前上下文到文件（用于断点恢复）。
 //    f. 循环控制：按 loop_rate 等待或立即开始下一轮。
 //
@@ -37,7 +38,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include "std_msgs/msg/string.hpp"
-#include <cs_interfaces/srv/get_input_snapshot.hpp>
+#include <cs_interfaces/srv/get_snapshot.hpp>
 #include <cs_interfaces/srv/get_tools_info.hpp>
 #include <cs_interfaces/srv/memory_recall.hpp>
 #include <cs_interfaces/srv/memory_archive.hpp>
@@ -60,15 +61,19 @@
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
 
-using GetInputSnapshot = cs_interfaces::srv::GetInputSnapshot;
+using GetSnapshot = cs_interfaces::srv::GetSnapshot;
 using GetToolsInfo = cs_interfaces::srv::GetToolsInfo;
 using MemoryRecall = cs_interfaces::srv::MemoryRecall;
 using MemoryArchive = cs_interfaces::srv::MemoryArchive;
 using ExecuteTool = cs_interfaces::action::ExecuteTool;
 
+// 压缩后插入的提醒消息
+#define COMPRESSION_REMINDER "记忆压缩完成，请基于当前系统提示词和对话摘要，继续为用户提供帮助。"
+
 class AgentLoopNode : public rclcpp::Node {
 public:
-  AgentLoopNode() : Node("agent_loop_node") {
+  explicit AgentLoopNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
+  : Node("agent_loop", options) {
     this->declare_parameter<std::string>("agent_name", "");
     this->declare_parameter<std::string>("context_dir", "~/.cloud_soul/contexts");
     this->declare_parameter<int>("max_context_tokens", 200000);
@@ -119,7 +124,7 @@ public:
       return;
     }
 
-    input_client_ = this->create_client<GetInputSnapshot>("/" + agent_name_ + "/input");
+    input_client_ = this->create_client<GetSnapshot>("/" + agent_name_ + "/input");
     tools_client_ = this->create_client<GetToolsInfo>("/" + agent_name_ + "/output/info");
     recall_client_ = this->create_client<MemoryRecall>("/" + agent_name_ + "/memory_recall");
     archive_client_ = this->create_client<MemoryArchive>("/" + agent_name_ + "/memory_archive");
@@ -138,11 +143,8 @@ private:
   // 查找目录下匹配 *_<agent_name>.json 的文件，返回最新修改的文件路径
   std::string find_context_file() {
     std::string found;
-    // 关键修复：初始化为最小值，确保任何文件的修改时间都更大
     fs::file_time_type latest_ftime = fs::file_time_type::min();
     std::string suffix = "_" + agent_name_ + ".json";
-    RCLCPP_INFO(this->get_logger(), "在 %s 中查找后缀为 '%s' 的文件",
-                context_dir_.c_str(), suffix.c_str());
     for (const auto& entry : fs::directory_iterator(context_dir_)) {
       if (!entry.is_regular_file()) continue;
       std::string fname = entry.path().filename().string();
@@ -153,11 +155,6 @@ private:
         latest_ftime = ftime;
         found = entry.path().string();
       }
-    }
-    if (!found.empty()) {
-      RCLCPP_INFO(this->get_logger(), "找到上下文文件: %s", found.c_str());
-    } else {
-      RCLCPP_INFO(this->get_logger(), "目录中无匹配 %s 的文件", suffix.c_str());
     }
     return found;
   }
@@ -175,11 +172,9 @@ private:
 
   template <typename T>
   void wait_for_service(typename rclcpp::Client<T>::SharedPtr client, const std::string& name) {
-    RCLCPP_DEBUG(this->get_logger(), "等待服务 %s 上线...", name.c_str());
     while (rclcpp::ok() && !client->wait_for_service(2s)) {
-      RCLCPP_DEBUG(this->get_logger(), "服务 %s 仍未就绪，重试中...", name.c_str());
+      std::this_thread::sleep_for(500ms);
     }
-    RCLCPP_DEBUG(this->get_logger(), "服务 %s 已上线", name.c_str());
   }
 
   template <typename ServiceT>
@@ -193,7 +188,6 @@ private:
         auto resp = future.get();
         if (resp) return resp;
       }
-      RCLCPP_WARN(this->get_logger(), "调用服务 %s 失败，重试中...", name.c_str());
       std::this_thread::sleep_for(1s);
     }
     return nullptr;
@@ -212,6 +206,17 @@ private:
     return resp->text;
   }
 
+  // 移除末尾未完成的工具调用（即最后一个 assistant 有 tool_calls 但缺少对应 tool 回复）
+  void trim_incomplete_tool_calls(std::vector<nlohmann::json>& msgs) {
+    if (msgs.empty()) return;
+    // 检查最后一条是否为 assistant 且包含 tool_calls
+    const auto& last = msgs.back();
+    if (last.value("role", "") == "assistant" && last.contains("tool_calls") &&
+        last["tool_calls"].is_array() && !last["tool_calls"].empty()) {
+      msgs.pop_back();
+    }
+  }
+
   void restore_or_initialize_messages() {
     if (fs::exists(context_file_path_)) {
       std::ifstream ifs(context_file_path_);
@@ -220,6 +225,7 @@ private:
           auto j = nlohmann::json::parse(ifs);
           if (j.is_array()) {
             messages_ = j.get<std::vector<nlohmann::json>>();
+            trim_incomplete_tool_calls(messages_);
             RCLCPP_INFO(this->get_logger(), "从 %s 恢复上下文，包含 %zu 条消息",
                         context_file_path_.c_str(), messages_.size());
             return;
@@ -244,7 +250,6 @@ private:
       RCLCPP_ERROR(this->get_logger(), "无法写入上下文文件 %s", context_file_path_.c_str());
       return;
     }
-    // 每条消息紧凑一行，消息之间换行
     ofs << "[\n";
     for (size_t i = 0; i < messages_.size(); ++i) {
       if (i > 0) ofs << ",\n";
@@ -252,8 +257,6 @@ private:
     }
     ofs << "\n]";
     ofs.close();
-    RCLCPP_DEBUG(this->get_logger(), "上下文已保存至 %s (%zu 条消息)",
-                 context_file_path_.c_str(), messages_.size());
   }
 
   int estimate_tokens(const std::vector<nlohmann::json>& msgs) {
@@ -264,11 +267,31 @@ private:
     return static_cast<int>(total_chars / 4);
   }
 
+  // 将消息列表按“对话轮次”切分，每个轮次从 user 开始，包含后续所有非 user 消息，直到下一个 user 或结尾
+  static std::vector<std::vector<nlohmann::json>> split_into_turns(const std::vector<nlohmann::json>& msgs) {
+    std::vector<std::vector<nlohmann::json>> turns;
+    std::vector<nlohmann::json> current_turn;
+    for (const auto& msg : msgs) {
+      if (msg.value("role", "") == "user") {
+        if (!current_turn.empty()) {
+          turns.push_back(std::move(current_turn));
+          current_turn.clear();
+        }
+      }
+      current_turn.push_back(msg);
+    }
+    if (!current_turn.empty()) {
+      turns.push_back(std::move(current_turn));
+    }
+    return turns;
+  }
+
   void compress_context() {
     RCLCPP_INFO(this->get_logger(), "上下文 token 超限，开始压缩...");
+    // 保存当前上下文（旧文件）
     save_context();
 
-    // 归档
+    // 归档旧文件（无限重试）
     while (rclcpp::ok()) {
       auto req = std::make_shared<MemoryArchive::Request>();
       req->json_path = context_file_path_;
@@ -278,51 +301,65 @@ private:
         if (resp && resp->error_code == 0) {
           RCLCPP_INFO(this->get_logger(), "上下文归档成功");
           break;
-        } else {
-          RCLCPP_WARN(this->get_logger(), "上下文归档失败 (error_code=%d)，重试中...",
-                      resp ? resp->error_code : -1);
         }
-      } else {
-        RCLCPP_WARN(this->get_logger(), "归档服务调用超时，重试中...");
       }
       std::this_thread::sleep_for(2s);
     }
 
+    // 提取最后 summary_turns_ 个完整对话轮次（含工具调用）
+    auto turns = split_into_turns(messages_);
+    size_t keep = std::min(turns.size(), static_cast<size_t>(summary_turns_));
+    std::vector<nlohmann::json> recent_turns_msgs;
+    for (size_t i = turns.size() - keep; i < turns.size(); ++i) {
+      recent_turns_msgs.insert(recent_turns_msgs.end(), turns[i].begin(), turns[i].end());
+    }
+    // 截断过长的工具输出，避免压缩后上下文仍超限
+    const size_t MAX_TOOL_CONTENT_LEN = 2000;
+    for (auto& msg : recent_turns_msgs) {
+        if (msg.value("role", "") == "tool" && msg.contains("content")) {
+            std::string content = msg["content"].get<std::string>();
+            if (content.size() > MAX_TOOL_CONTENT_LEN) {
+                content = content.substr(0, MAX_TOOL_CONTENT_LEN)
+                          + "\n...[工具输出已截断]";
+                msg["content"] = content;
+            }
+        }
+    }
     // 生成摘要
     std::string summary;
-    std::vector<std::pair<std::string, std::string>> turns;
-    std::string last_user;
-    for (auto it = messages_.rbegin(); it != messages_.rend(); ++it) {
-      if (it->value("role", "") == "user") {
-        last_user = it->value("content", "");
-      } else if (it->value("role", "") == "assistant" && !last_user.empty()) {
-        std::string assistant = it->value("content", "");
-        if (!assistant.empty()) {
-          turns.push_back({last_user, assistant});
-          last_user.clear();
-          if (turns.size() >= static_cast<size_t>(summary_turns_)) break;
+    for (size_t i = 0; i < keep; ++i) {
+      const auto& turn = turns[turns.size() - keep + i];
+      for (const auto& msg : turn) {
+        if (msg.value("role", "") == "user") {
+          summary += "用户: " + msg.value("content", "") + "\n";
+        } else if (msg.value("role", "") == "assistant") {
+          // 跳过纯工具调用消息（content 为空），只取真实回复
+          if (msg.contains("content") && msg["content"].is_string() && !msg["content"].get<std::string>().empty()) {
+            summary += "助手: " + msg["content"].get<std::string>() + "\n";
+          }
         }
       }
-    }
-    for (auto it = turns.rbegin(); it != turns.rend(); ++it) {
-      summary += "用户: " + it->first + "\n";
-      summary += "助手: " + it->second + "\n\n";
+      summary += "\n";
     }
 
+    // 重新获取系统提示词
     std::string rule = load_rule_text();
     messages_.clear();
     messages_.push_back({{"role", "system"}, {"content", rule + "\n\n[对话摘要]\n" + summary}});
-    for (auto it = turns.rbegin(); it != turns.rend(); ++it) {
-        nlohmann::json user_msg;
-        user_msg["role"] = "user";
-        user_msg["content"] = it->first;
-        messages_.push_back(user_msg);
-        nlohmann::json asst_msg;
-        asst_msg["role"] = "assistant";
-        asst_msg["content"] = it->second;
-        messages_.push_back(asst_msg);
+    // 重新插入最近完整对话
+    for (auto& msg : recent_turns_msgs) {
+      messages_.push_back(std::move(msg));
     }
-    RCLCPP_INFO(this->get_logger(), "上下文压缩完成，重新开始");
+
+    // 确保末尾没有未完成的工具调用
+    trim_incomplete_tool_calls(messages_);
+
+    // 插入压缩完成提醒
+    messages_.push_back({{"role", "user"}, {"content", COMPRESSION_REMINDER}});
+
+    // 创建新的上下文文件名
+    context_file_path_ = create_new_context_filename();
+    RCLCPP_INFO(this->get_logger(), "压缩完成，新上下文文件: %s", context_file_path_.c_str());
     save_context();
   }
 
@@ -395,7 +432,9 @@ private:
       }
     }
     return out;
-  }  // 递归清理 nlohmann::json 对象中所有字符串值
+  }
+
+  // 递归清理 nlohmann::json 对象中所有字符串值
   static void sanitize_json_recursive(nlohmann::json& obj) {
     if (obj.is_string()) {
       obj = sanitize_json_string(obj.get<std::string>());
@@ -463,7 +502,7 @@ private:
   void run_loop() {
     RCLCPP_INFO(this->get_logger(), "开始 Agent 主循环");
 
-    wait_for_service<GetInputSnapshot>(input_client_, "input");
+    wait_for_service<GetSnapshot>(input_client_, "input");
     wait_for_service<GetToolsInfo>(tools_client_, "output/info");
     wait_for_service<MemoryRecall>(recall_client_, "memory_recall");
     wait_for_service<MemoryArchive>(archive_client_, "memory_archive");
@@ -474,11 +513,10 @@ private:
     restore_or_initialize_messages();
 
     while (rclcpp::ok()) {
-      auto input_resp = call_service_reliably<GetInputSnapshot>(input_client_, "input");
+      auto input_resp = call_service_reliably<GetSnapshot>(input_client_, "input");
       if (input_resp) {
         std::string snapshot = input_resp->snapshot_json;
         if (!snapshot.empty()) {
-          // 仅对 user_command 部分做 hash，忽略 system_status 中变化的时间戳等
           std::string hash_src = snapshot;
           try {
             auto j = nlohmann::json::parse(snapshot);
@@ -490,10 +528,8 @@ private:
           if (cur_hash != last_snapshot_hash_) {
             last_snapshot_hash_ = cur_hash;
             messages_.push_back({{"role", "user"}, {"content", snapshot}});
-            RCLCPP_DEBUG(this->get_logger(), "添加输入快照到历史");
             save_context();
           } else {
-            RCLCPP_DEBUG(this->get_logger(), "输入快照未变化，跳过本轮");
             if (loop_rate_ <= 0.0) {
               std::this_thread::sleep_for(1s);
             }
@@ -529,7 +565,6 @@ private:
         bool has_tool_calls = reply.contains("tool_calls") && !reply["tool_calls"].is_null() &&
                               reply["tool_calls"].is_array() && !reply["tool_calls"].empty();
         if (!has_tool_calls) {
-          // 不再自动发布 content。Agent 通过 user_notify 工具显式通知用户。
           break;
         }
 
@@ -550,8 +585,6 @@ private:
           client.add_message(tool_msg);
           save_context();
 
-          // user_notify 工具的消息同步发布到 /<agent_name>/response，
-          // 供 chat.py 和 server.py 等 output_src 订阅显示
           if (func_name == "user_notify") {
             try {
               auto args = nlohmann::json::parse(arguments);
@@ -588,7 +621,7 @@ private:
   std::string openai_api_key_;
   std::string openai_model_;
 
-  rclcpp::Client<GetInputSnapshot>::SharedPtr input_client_;
+  rclcpp::Client<GetSnapshot>::SharedPtr input_client_;
   rclcpp::Client<GetToolsInfo>::SharedPtr tools_client_;
   rclcpp::Client<MemoryRecall>::SharedPtr recall_client_;
   rclcpp::Client<MemoryArchive>::SharedPtr archive_client_;

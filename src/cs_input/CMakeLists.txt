@@ -10,7 +10,8 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(cs_interfaces REQUIRED)
 
-add_executable(input_mgmt_node src/input_mgmt.cpp)
+# ---------- input_mgmt_node ----------
+add_executable(input_mgmt_node src/input_mgmt_node.cpp)
 target_include_directories(input_mgmt_node PUBLIC
   ${rclcpp_INCLUDE_DIRS}
   ${std_msgs_INCLUDE_DIRS}
@@ -21,19 +22,30 @@ ament_target_dependencies(input_mgmt_node
   std_msgs
   cs_interfaces
 )
-
 install(TARGETS input_mgmt_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
-add_executable(system_status_node src/system_status.cpp)
+# ---------- system_status_node ----------
+add_executable(system_status_node src/system_status_node.cpp)
 ament_target_dependencies(system_status_node
-  rclcpp std_msgs cs_interfaces)
-install(TARGETS system_status_node DESTINATION lib/${PROJECT_NAME})
+  rclcpp
+  std_msgs
+  cs_interfaces
+)
+install(TARGETS system_status_node
+  DESTINATION lib/${PROJECT_NAME}
+)
 
-add_executable(user_command_node src/user_command.cpp)
-ament_target_dependencies(user_command_node
-  rclcpp std_msgs cs_interfaces)
-install(TARGETS user_command_node DESTINATION lib/${PROJECT_NAME})
+# ---------- message_receive_node ----------
+add_executable(message_receive_node src/message_receive_node.cpp)
+ament_target_dependencies(message_receive_node
+  rclcpp
+  std_msgs
+  cs_interfaces
+)
+install(TARGETS message_receive_node
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 ament_package()

@@ -1,11 +1,12 @@
 # Goal
-string input_json        # 工具调用请求的 JSON 字符串，格式：{"name": "xxx", "arguments": {...}}
+string input_json         # 原有字段，JSON 格式的工具调用请求
+float64 timeout_sec 0.0   # 调用超时时间（秒），0 表示使用节点默认值
 
 ---
 # Result
-string output_json       # 工具执行结果 JSON 字符串
-int32 exit_code          # 0-成功，非0-失败（工具业务错误或系统错误）
+string output_json
+int32 exit_code
 
 ---
-# Feedback（本实现中不使用，但ROS2要求至少一个字段）
-string status
+# Feedback
+string status # 保留

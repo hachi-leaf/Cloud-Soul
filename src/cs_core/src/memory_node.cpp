@@ -1,7 +1,7 @@
 // Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 //
-// mrymt_node.cpp – 记忆管理节点
+// memory_node.cpp – 记忆管理节点
 // 提供两个服务：
 //   /<agent_name>/memory_recall   无输入，返回错误码与合入规则后的文本
 //   /<agent_name>/memory_archive  输入 JSON 路径，压缩后存入日记并推送
@@ -75,11 +75,11 @@ static int ssh_cred_callback(git_cred **out,
 }
 
 // -----------------------------------------------------------------------------
-// MrymtNode 类定义
+// MemoryNode 类定义
 // -----------------------------------------------------------------------------
-class MrymtNode : public rclcpp::Node {
+class MemoryNode : public rclcpp::Node {
 public:
-    MrymtNode();
+    MemoryNode();
 
 private:
     // ---------- 参数 ----------
@@ -114,8 +114,8 @@ private:
 // =============================================================================
 // 构造函数：读取参数，创建服务
 // =============================================================================
-MrymtNode::MrymtNode()
-    : Node("mrymt_node") {
+MemoryNode::MemoryNode()
+    : Node("memory_node") {
     agent_name_ = declare_parameter<std::string>("agent_name", "");
     repo_url_   = declare_parameter<std::string>("repo_url", "");
     repo_name_  = declare_parameter<std::string>("repo_name", "origin");
@@ -143,12 +143,12 @@ MrymtNode::MrymtNode()
 
     recall_srv_ = create_service<cs_interfaces::srv::MemoryRecall>(
         recall_srv_name,
-        std::bind(&MrymtNode::on_recall, this, std::placeholders::_1, std::placeholders::_2));
+        std::bind(&MemoryNode::on_recall, this, std::placeholders::_1, std::placeholders::_2));
     archive_srv_ = create_service<cs_interfaces::srv::MemoryArchive>(
         archive_srv_name,
-        std::bind(&MrymtNode::on_archive, this, std::placeholders::_1, std::placeholders::_2));
+        std::bind(&MemoryNode::on_archive, this, std::placeholders::_1, std::placeholders::_2));
 
-    RCLCPP_INFO(get_logger(), "mrymt 节点启动，服务 %s / %s 已就绪",
+    RCLCPP_INFO(get_logger(), "memory 节点启动，服务 %s / %s 已就绪",
                 recall_srv_name.c_str(), archive_srv_name.c_str());
 }
 
@@ -156,7 +156,7 @@ MrymtNode::MrymtNode()
 // 同步仓库：clone / fetch + hard reset 到远端分支
 // 返回 0 成功（或网络不可达时跳过），-1 失败
 // =============================================================================
-int MrymtNode::ensure_repo_updated() {
+int MemoryNode::ensure_repo_updated() {
     git_repository *repo = nullptr;
 
     if (!fs::exists(repo_dir_))
@@ -260,9 +260,9 @@ int MrymtNode::ensure_repo_updated() {
 // =============================================================================
 // 递归替换 [path] 占位符
 // =============================================================================
-std::string MrymtNode::expand_text(const std::string &text,
-                                   const fs::path &repo_path,
-                                   int depth) const {
+std::string MemoryNode::expand_text(const std::string &text,
+                                    const fs::path &repo_path,
+                                    int depth) const {
     if (depth > 20) return text;
     std::regex bracket_re(R"(\[([^\[\]]+)\])");
     std::smatch m;
@@ -290,7 +290,7 @@ std::string MrymtNode::expand_text(const std::string &text,
 // =============================================================================
 // 获取 UTC 日期字符串 YYYYMMDD
 // =============================================================================
-std::string MrymtNode::utc_date_str() const {
+std::string MemoryNode::utc_date_str() const {
     auto now = std::chrono::system_clock::now();
     std::time_t tt = std::chrono::system_clock::to_time_t(now);
     std::tm *gmt = std::gmtime(&tt);
@@ -302,7 +302,7 @@ std::string MrymtNode::utc_date_str() const {
 // =============================================================================
 // memory_recall 服务回调
 // =============================================================================
-void MrymtNode::on_recall(
+void MemoryNode::on_recall(
     const std::shared_ptr<cs_interfaces::srv::MemoryRecall::Request> /*req*/,
     std::shared_ptr<cs_interfaces::srv::MemoryRecall::Response> res) {
 
@@ -337,7 +337,7 @@ void MrymtNode::on_recall(
 // =============================================================================
 // memory_archive 服务回调（修正文件流转逻辑）
 // =============================================================================
-void MrymtNode::on_archive(
+void MemoryNode::on_archive(
     const std::shared_ptr<cs_interfaces::srv::MemoryArchive::Request> req,
     std::shared_ptr<cs_interfaces::srv::MemoryArchive::Response> res) {
 
@@ -530,7 +530,7 @@ void MrymtNode::on_archive(
 
         git_signature *sig = nullptr;
         if (git_signature_default(&sig, repo) != 0)
-            git_signature_now(&sig, "mrymt", "mrymt@localhost");
+            git_signature_now(&sig, "memory", "memory@localhost");
 
         std::string commit_msg = "archive diary " + date_str;
         git_oid commit_oid;
@@ -621,7 +621,7 @@ void MrymtNode::on_archive(
 int main(int argc, char **argv) {
     git_libgit2_init();
     rclcpp::init(argc, argv);
-    auto node = std::make_shared<MrymtNode>();
+    auto node = std::make_shared<MemoryNode>();
     rclcpp::spin(node);
     rclcpp::shutdown();
     git_libgit2_shutdown();

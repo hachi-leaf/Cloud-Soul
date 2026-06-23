@@ -8,7 +8,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/MemoryRecall.srv"
   "srv/MemoryArchive.srv"
   "srv/GetToolsInfo.srv"
-  "srv/GetInputSnapshot.srv"
+  "srv/GetSnapshot.srv"
+  "srv/SendMessage.srv"
+  "msg/InputInfo.msg"
   "action/ExecuteTool.action"
   DEPENDENCIES
 )

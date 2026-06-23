@@ -10,35 +10,36 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(cs_interfaces REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(std_msgs REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBGIT2 REQUIRED libgit2)
-
 find_package(CURL REQUIRED)
-find_package(std_msgs REQUIRED)
 
-# ---------- mrymt_node ----------
-add_executable(mrymt_node
-  src/mrymt_node.cpp
+# ---------- memory_node ----------
+add_executable(memory_node
+  src/memory_node.cpp
   src/call_openai.cpp
 )
 
-target_include_directories(mrymt_node PRIVATE
+target_include_directories(memory_node PRIVATE
   include
   ${LIBGIT2_INCLUDE_DIRS}
   ${CURL_INCLUDE_DIRS}
 )
 
-target_link_libraries(mrymt_node
+target_link_libraries(memory_node
   rclcpp::rclcpp
   ${LIBGIT2_LIBRARIES}
   ${CURL_LIBRARIES}
   nlohmann_json::nlohmann_json
 )
 
-ament_target_dependencies(mrymt_node cs_interfaces)
+ament_target_dependencies(memory_node
+  cs_interfaces
+)
 
-install(TARGETS mrymt_node
+install(TARGETS memory_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -60,15 +61,13 @@ target_link_libraries(agent_loop_node
   nlohmann_json::nlohmann_json
 )
 
-ament_target_dependencies(agent_loop_node cs_interfaces std_msgs)
+ament_target_dependencies(agent_loop_node
+  cs_interfaces
+  std_msgs
+)
 
 install(TARGETS agent_loop_node
   DESTINATION lib/${PROJECT_NAME}
-)
-
-# ---------- launch ----------
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()

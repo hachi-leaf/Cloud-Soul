@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.8)
 project(cs_output)
 
-# 默认使用 C++17
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
@@ -12,46 +11,54 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(cs_interfaces REQUIRED)
+find_package(CURL REQUIRED)
+find_package(LibXml2 REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
-add_executable(file_read_node src/file_read.cpp)
-ament_target_dependencies(file_read_node rclcpp rclcpp_action std_msgs cs_interfaces)
-install(TARGETS file_read_node DESTINATION lib/${PROJECT_NAME})
-
-add_executable(file_write_node src/file_write.cpp)
-ament_target_dependencies(file_write_node rclcpp rclcpp_action std_msgs cs_interfaces)
-install(TARGETS file_write_node DESTINATION lib/${PROJECT_NAME})
-
-add_executable(shell_exec_node src/shell_exec.cpp)
-ament_target_dependencies(shell_exec_node rclcpp rclcpp_action std_msgs cs_interfaces)
-install(TARGETS shell_exec_node DESTINATION lib/${PROJECT_NAME})
-
-add_executable(user_notify_node src/user_notify.cpp)
-ament_target_dependencies(user_notify_node rclcpp rclcpp_action std_msgs cs_interfaces)
-install(TARGETS user_notify_node DESTINATION lib/${PROJECT_NAME})
-
-add_executable(output_mgmt_node src/output_mgmt.cpp)
-
-# 包含路径：cs_interfaces 生成的头文件
-target_include_directories(output_mgmt_node PUBLIC
-  ${rclcpp_INCLUDE_DIRS}
-  ${rclcpp_action_INCLUDE_DIRS}
-  ${std_msgs_INCLUDE_DIRS}
-  ${cs_interfaces_INCLUDE_DIRS}
+# 定义可执行文件及其源文件
+set(EXECUTABLE_LIST
+  output_mgmt_node    src/output_mgmt_node.cpp
+  shell_exec_node     src/shell_exec_node.cpp
+  file_read_node      src/file_read_node.cpp
+  file_write_node     src/file_write_node.cpp
+  message_send_node   src/message_send_node.cpp
+  web_search_node     src/web_search_node.cpp
 )
 
-# 链接库
-ament_target_dependencies(output_mgmt_node
-  rclcpp
-  rclcpp_action
-  std_msgs
-  cs_interfaces
-)
+# 批量创建可执行文件
+list(LENGTH EXECUTABLE_LIST EXEC_COUNT)
+set(INDEX 0)
+while(INDEX LESS EXEC_COUNT)
+  list(GET EXECUTABLE_LIST ${INDEX} TARGET_NAME)
+  math(EXPR INDEX "${INDEX} + 1")
+  list(GET EXECUTABLE_LIST ${INDEX} SOURCE_FILE)
+  math(EXPR INDEX "${INDEX} + 1")
 
-# 安装可执行文件到 lib/<package> 目录
-install(TARGETS output_mgmt_node
-  DESTINATION lib/${PROJECT_NAME})
+  add_executable(${TARGET_NAME} ${SOURCE_FILE})
+  ament_target_dependencies(${TARGET_NAME}
+    rclcpp
+    rclcpp_action
+    std_msgs
+    cs_interfaces
+  )
 
-# 如果需要安装 launch 或其他目录，可在此添加
+  # web_search_node 需要额外链接 libcurl、libxml2、nlohmann_json
+  if(TARGET_NAME STREQUAL "web_search_node")
+    target_link_libraries(${TARGET_NAME}
+      ${CURL_LIBRARIES}
+      ${LIBXML2_LIBRARIES}
+      nlohmann_json::nlohmann_json
+    )
+    target_include_directories(${TARGET_NAME} PRIVATE
+      ${CURL_INCLUDE_DIRS}
+      ${LIBXML2_INCLUDE_DIR}
+    )
+  endif()
+
+  install(TARGETS ${TARGET_NAME}
+    DESTINATION lib/${PROJECT_NAME})
+endwhile()
+
 # install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 ament_package()
