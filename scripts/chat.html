@@ -22,7 +22,7 @@
   --text: #4c4f69; --text-muted: #5c5f77; --text-dim: #9ca0b0;
   --accent: #1e66f5; --accent-hover: #7287fd; --green: #40a02b;
   --red: #d20f39; --yellow: #df8e1d; --border: #ccd0da;
-  --code-bg: #dce0e8; --user-bubble: #1e66f5; --user-text: #eff1f5;
+  --code-bg: #1a1826; --user-bubble: #1e66f5; --user-text: #eff1f5;
   --shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
 
@@ -43,7 +43,7 @@ body {
 #header h1 { font-size: 16px; font-weight: 600; }
 #header .actions { margin-left: auto; display: flex; gap: 8px; }
 #header button {
-  padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+  padding: 6px 12px; border-radius: 8px; border: 1px solid var(--code-bg);
   background: var(--surface); color: var(--text); cursor: pointer;
   font-size: 13px; transition: 0.2s;
 }
@@ -105,12 +105,12 @@ body {
 .bubble pre {
   background: var(--code-bg); border-radius: 10px; padding: 16px;
   overflow-x: auto; margin: 10px 0; position: relative;
-  border: 1px solid var(--border);
+  border: 1px solid var(--code-bg);
 }
 .bubble pre code { font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace; font-size: 13px; }
 .copy-btn {
   position: absolute; top: 8px; right: 8px; padding: 4px 10px;
-  background: var(--overlay); color: var(--text-muted); border: 1px solid var(--border);
+  background: var(--overlay); color: var(--text-muted); border: 1px solid var(--code-bg);
   border-radius: 6px; cursor: pointer; font-size: 11px; opacity: 0; transition: 0.2s;
 }
 .bubble pre:hover .copy-btn { opacity: 1; }
