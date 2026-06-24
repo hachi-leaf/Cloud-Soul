@@ -44,7 +44,18 @@ AGENT_NAME = args.agent
 PORT = args.port
 
 app = Flask(__name__)
-message_queue = queue.Queue(maxsize=256)
+# 多连接广播：每个 SSE 连接一个独立队列，消息到来时广播到所有队列
+_conns = []          # list of queue.Queue
+_conns_lock = threading.Lock()
+
+def broadcast_message(msg, role='agent'):
+    payload = json.dumps({'role': role, 'msg': msg})
+    with _conns_lock:
+        for q in _conns[:]:
+            try:
+                q.put_nowait(payload)
+            except queue.Full:
+                pass
 
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 * 1024  # 10GB
 UPLOAD_DIR = Path('/tmp/web_uploads')
@@ -85,10 +96,7 @@ class WebChatNode(Node):
         self.get_logger().info(f'已订阅 /{agent_name}/output/message_send/web_chat')
 
     def on_agent_reply(self, msg):
-        try:
-            message_queue.put_nowait(msg.data)
-        except queue.Full:
-            self.get_logger().warn('消息队列已满，丢弃一条')
+        broadcast_message(msg.data)
 
     def send_to_agent(self, message):
         req = SendMessage.Request()
@@ -145,6 +153,7 @@ def handle_send():
 
     msg = data['message'] or ''
     files = data.get('files', [])
+    display_msg = msg  # 用户可见的消息文本
     if files:
         parts = []
         for f in files:
@@ -157,7 +166,12 @@ def handle_send():
             else:
                 sz = f'{size}B'
             parts.append(f'{name} ({sz})')
-        msg = msg + '\n[附件: ' + ', '.join(parts) + ']'
+        attachment = '\n[附件: ' + ', '.join(parts) + ']'
+        msg = msg + attachment
+        display_msg = display_msg + attachment
+
+    # 广播用户消息到所有窗口
+    broadcast_message(display_msg, role='user')
 
     result = ros_node.send_to_agent(msg)
     return jsonify(result)
@@ -191,15 +205,23 @@ def handle_upload():
 
 @app.route('/stream')
 def stream():
+    q = queue.Queue(maxsize=64)
+    with _conns_lock:
+        _conns.append(q)
     def generate():
-        while True:
-            try:
-                msg = message_queue.get(timeout=30)
-                for line in msg.split('\n'):
-                    yield f'data: {line}\n'
-                yield '\n'
-            except queue.Empty:
-                yield ': keepalive\n\n'
+        try:
+            while True:
+                try:
+                    msg = q.get(timeout=30)
+                    for line in msg.split('\n'):
+                        yield f'data: {line}\n'
+                    yield '\n'
+                except queue.Empty:
+                    yield ': keepalive\n\n'
+        finally:
+            with _conns_lock:
+                if q in _conns:
+                    _conns.remove(q)
     return Response(generate(), mimetype='text/event-stream',
                     headers={'Cache-Control': 'no-cache',
                              'X-Accel-Buffering': 'no'})

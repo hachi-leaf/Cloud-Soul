@@ -437,7 +437,7 @@ sb.onclick=sm;
 ti.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sm();}});
 
 const es=new EventSource('/stream');
-es.onmessage=e=>{am(e.data,'agent');stt.textContent='已连接';};
+es.onmessage=e=>{try{var d=JSON.parse(e.data);am(d.msg,d.role||'agent');}catch(_){am(e.data,'agent');}stt.textContent='已连接';};
 es.onerror=()=>{stt.textContent='重连中...';};
 </script>
 </body>
