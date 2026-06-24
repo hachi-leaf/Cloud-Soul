@@ -223,11 +223,15 @@ def stream():
         try:
             while True:
                 try:
-                    msg = q.get(timeout=30)
+                    msg = q.get(timeout=5)
                     for line in msg.split('\n'):
                         yield f'data: {line}\n'
                     yield '\n'
                 except queue.Empty:
+                    yield ': keepalive\n\n'
+                except GeneratorExit:
+                    break
+                except Exception:
                     yield ': keepalive\n\n'
         finally:
             with _conns_lock:

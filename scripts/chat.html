@@ -437,9 +437,27 @@ sb.onclick=sm;
 ti.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sm();}});
 
 const es=new EventSource('/stream');
-let _lastSent='';
-es.onmessage=e=>{try{var d=JSON.parse(e.data);var r=d.role||'agent';if(r==='user'&&d.msg===_lastSent){_lastSent='';return;}am(d.msg,r);}catch(_){am(e.data,'agent');}stt.textContent='已连接';};
+let _lastSent='',_lastMsgTime=Date.now();
+es.onmessage=e=>{
+  try{var d=JSON.parse(e.data);var r=d.role||'agent';if(r==='user'&&d.msg===_lastSent){_lastSent='';return;}am(d.msg,r);}catch(_){am(e.data,'agent');}
+  stt.textContent='已连接';_lastMsgTime=Date.now();
+};
 es.onerror=()=>{stt.textContent='重连中...';};
+setInterval(()=>{if(Date.now()-_lastMsgTime>65000){es.close();es=new EventSource('/stream');_lastMsgTime=Date.now();}},30000);
+
+// 页面加载时拉取历史记录
+(async function(){
+  try{
+    const r=await fetch('/history');
+    const d=await r.json();
+    if(d.messages){
+      d.messages.forEach(m=>{
+        am(m.msg, m.role||'agent');
+      });
+    }
+  }catch(e){}
+  ms.scrollTop=ms.scrollHeight;
+})();
 </script>
 </body>
 </html>
