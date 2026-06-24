@@ -248,6 +248,45 @@ private:
     return out;
   }
 
+  // ---------------------------------------------------------------
+  // JSON 参数修复: LLM 生成的 arguments 可能内嵌未转义的引号
+  // 状态机: 跟踪 JSON 字符串边界, 对字符串内的裸引号进行转义
+  // ---------------------------------------------------------------
+  static std::string repair_json_args(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 16);
+    enum State { DEFAULT, IN_STRING } state = DEFAULT;
+
+    for (size_t i = 0; i < s.size(); ++i) {
+      char c = s[i];
+
+      if (state == DEFAULT) {
+        if (c == '"') state = IN_STRING;
+        out += c;
+      } else { // IN_STRING
+        if (c == '\\' && i+1 < s.size()) {
+          out += c;
+          out += s[++i];  // preserve escape
+        } else if (c == '"') {
+          // look ahead: is this a string terminator?
+          size_t j = i + 1;
+          while (j < s.size()
+                 && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r'))
+            ++j;
+          if (j < s.size()
+              && (s[j] == ',' || s[j] == '}' || s[j] == ']' || s[j] == ':')) {
+            state = DEFAULT;  // real terminator
+            out += c;
+          } else {
+            out += "\\\"";  // content quote, escape it
+          }
+        } else {
+          out += c;
+        }
+      }
+    }
+    return out;
+  }
   static void sanitize_json_recursive(nlohmann::json& j) {
     if (j.is_string()) j = sanitize_json_string(j.get<std::string>());
     else if (j.is_array()) for (auto& e : j) sanitize_json_recursive(e);
@@ -340,8 +379,13 @@ private:
     try {
       args = nlohmann::json::parse(arguments_json);
     } catch (const std::exception& e) {
-      RCLCPP_WARN(get_logger(), "工具参数解析失败: %s", e.what());
-      return {{"error", std::string(cloud_soul::Msg::TOOL_PARAM_INVALID) + e.what()}};
+      auto repaired = repair_json_args(arguments_json);
+      try {
+        args = nlohmann::json::parse(repaired);
+      } catch (const std::exception& e2) {
+        RCLCPP_WARN(get_logger(), "工具参数解析失败: %s", e2.what());
+        return {{"error", std::string(cloud_soul::Msg::TOOL_PARAM_INVALID) + e2.what()}};
+      }
     }
 
     auto goal = ExecuteTool::Goal();
