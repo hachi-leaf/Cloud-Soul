@@ -47,9 +47,16 @@ app = Flask(__name__)
 # 多连接广播：每个 SSE 连接一个独立队列，消息到来时广播到所有队列
 _conns = []          # list of queue.Queue
 _conns_lock = threading.Lock()
+_history = []        # list of {'role': 'user'/'agent', 'msg': str}
+_history_max = 200   # 最多保留条数
 
 def broadcast_message(msg, role='agent'):
     payload = json.dumps({'role': role, 'msg': msg})
+    # 记录历史
+    _history.append({'role': role, 'msg': msg})
+    if len(_history) > _history_max:
+        _history.pop(0)
+    # 广播到所有连接
     with _conns_lock:
         for q in _conns[:]:
             try:
@@ -202,6 +209,10 @@ def handle_upload():
         except Exception as e:
             results.append({'original_name': f.filename, 'error': str(e)})
     return jsonify({'success': True, 'files': results})
+
+@app.route('/history')
+def history():
+    return jsonify({'messages': list(_history)})
 
 @app.route('/stream')
 def stream():

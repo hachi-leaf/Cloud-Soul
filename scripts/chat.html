@@ -426,7 +426,7 @@ async function sm(){
     stt.textContent = '发送中...';
   }
   if(!t) { am('', 'user', uploaded); clearUploads(); sb.disabled = false; stt.textContent = '已上传 ' + uploaded.length + ' 个文件'; return; }
-  am(t,'user',uploaded);ti.value='';ar();clearUploads();stt.textContent='发送中...';sb.disabled=true;
+  _lastSent=t;am(t,'user',uploaded);ti.value='';ar();clearUploads();stt.textContent='发送中...';sb.disabled=true;
   try{
     const r=await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:t, files:uploaded})});
     const d=await r.json();stt.textContent=d.success?'已发送':'失败: '+(d.error||'?');
@@ -437,7 +437,8 @@ sb.onclick=sm;
 ti.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sm();}});
 
 const es=new EventSource('/stream');
-es.onmessage=e=>{try{var d=JSON.parse(e.data);am(d.msg,d.role||'agent');}catch(_){am(e.data,'agent');}stt.textContent='已连接';};
+let _lastSent='';
+es.onmessage=e=>{try{var d=JSON.parse(e.data);var r=d.role||'agent';if(r==='user'&&d.msg===_lastSent){_lastSent='';return;}am(d.msg,r);}catch(_){am(e.data,'agent');}stt.textContent='已连接';};
 es.onerror=()=>{stt.textContent='重连中...';};
 </script>
 </body>
