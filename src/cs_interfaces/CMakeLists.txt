@@ -15,4 +15,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   DEPENDENCIES
 )
 
+# install headers
+install(DIRECTORY include/ DESTINATION include)
+ament_export_include_directories(include)
+
 ament_package()

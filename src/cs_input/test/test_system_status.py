@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Leaf
+# Copyright (c) leaf
 # SPDX-License-Identifier: MIT
 """
 system_status_node 功能测试脚本（简化版）

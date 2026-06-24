@@ -1,3 +1,6 @@
+# Copyright (c) leaf
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 file_write_node 集成测试（修复取消断言）

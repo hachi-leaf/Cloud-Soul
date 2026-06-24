@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include "cs_interfaces/srv/memory_recall.hpp"
+#include "cs_interfaces/constants.hpp"
 #include "cs_interfaces/srv/memory_archive.hpp"
 #include "cs_core/call_openai.hpp"
 
@@ -123,9 +124,9 @@ MemoryNode::MemoryNode()
     repo_dir_   = declare_parameter<std::string>("repo_dir", "");
     rule_path_  = declare_parameter<std::string>("rule_path", "prompts/RULE.md");
 
-    openai_base_url_ = declare_parameter<std::string>("openai_base_url", "https://api.openai.com/v1");
+    openai_base_url_ = declare_parameter<std::string>("openai_base_url", "https://api.deepseek.com");
     openai_api_key_  = declare_parameter<std::string>("openai_api_key", "");
-    openai_model_    = declare_parameter<std::string>("openai_model", "gpt-4o");
+    openai_model_    = declare_parameter<std::string>("openai_model", "deepseek-chat");
 
     if (openai_api_key_.empty()) {
         const char *env = std::getenv("OPENAI_API_KEY");
@@ -224,7 +225,7 @@ int MemoryNode::ensure_repo_updated() {
         return -1;
     }
 
-    std::string remote_ref = "refs/remotes/" + repo_name_ + "/" + repo_fork_;
+    std::string remote_ref = cloud_soul::REFS_REMOTES_PREFIX + repo_name_ + "/" + repo_fork_;
     git_oid target_oid;
     if (git_reference_name_to_id(&target_oid, repo, remote_ref.c_str()) != 0) {
         RCLCPP_ERROR(get_logger(), "找不到远程分支 %s", remote_ref.c_str());
@@ -263,7 +264,7 @@ int MemoryNode::ensure_repo_updated() {
 std::string MemoryNode::expand_text(const std::string &text,
                                     const fs::path &repo_path,
                                     int depth) const {
-    if (depth > 20) return text;
+    if (depth > cloud_soul::FILE_INCLUDE_MAX_DEPTH) return text;
     std::regex bracket_re(R"(\[([^\[\]]+)\])");
     std::smatch m;
     std::string work = text;
@@ -294,7 +295,7 @@ std::string MemoryNode::utc_date_str() const {
     auto now = std::chrono::system_clock::now();
     std::time_t tt = std::chrono::system_clock::to_time_t(now);
     std::tm *gmt = std::gmtime(&tt);
-    char buf[16];
+    char buf[cloud_soul::DATE_BUF_SIZE];
     std::strftime(buf, sizeof(buf), "%Y%m%d", gmt);
     return std::string(buf);
 }
@@ -308,8 +309,8 @@ void MemoryNode::on_recall(
 
     RCLCPP_INFO(get_logger(), "memory_recall 被调用");
     if (ensure_repo_updated() != 0) {
-        res->error_code = -1;
-        res->text = "仓库同步失败";
+        res->error_code = cloud_soul::Err::MemArchive::FILE_NOT_FOUND;
+        res->text = cloud_soul::Msg::REPO_SYNC_FAILED;
         return;
     }
 
@@ -318,8 +319,8 @@ void MemoryNode::on_recall(
     {
         std::ifstream ifs(rule_file);
         if (!ifs) {
-            res->error_code = -2;
-            res->text = "无法打开规则文件: " + rule_path_;
+            res->error_code = cloud_soul::Err::MemArchive::RENAME_FAILED;
+            res->text = cloud_soul::Msg::RULE_OPEN_FAILED + rule_path_;
             RCLCPP_ERROR(get_logger(), "打开 %s 失败", rule_file.c_str());
             return;
         }
@@ -346,7 +347,7 @@ void MemoryNode::on_archive(
 
     if (!fs::exists(json_path)) {
         RCLCPP_ERROR(get_logger(), "JSON 文件不存在");
-        res->error_code = -1;
+        res->error_code = cloud_soul::Err::MemArchive::FILE_NOT_FOUND;
         return;
     }
 
@@ -358,7 +359,7 @@ void MemoryNode::on_archive(
     fs::rename(json_path, processing_path, ec);
     if (ec) {
         RCLCPP_ERROR(get_logger(), "重命名失败：%s", ec.message().c_str());
-        res->error_code = -2;
+        res->error_code = cloud_soul::Err::MemArchive::RENAME_FAILED;
         return;
     }
 
@@ -371,7 +372,7 @@ void MemoryNode::on_archive(
         }
     };
 
-    const int MAX_RETRIES = 5;
+    const int MAX_RETRIES = cloud_soul::ARCHIVE_PUSH_MAX_RETRIES;
     int attempt = 0;
     bool success = false;
     while (attempt < MAX_RETRIES && !success) {
@@ -389,7 +390,7 @@ void MemoryNode::on_archive(
             if (!ifs) {
                 RCLCPP_ERROR(get_logger(), "无法打开 COMPRESS.md");
                 revert_processing();
-                res->error_code = -3;
+                res->error_code = cloud_soul::Err::MemArchive::COMPRESS_OPEN_FAILED;
                 return;
             }
             std::stringstream ss;
@@ -403,7 +404,7 @@ void MemoryNode::on_archive(
             if (!ifs) {
                 RCLCPP_ERROR(get_logger(), "无法打开 .processing 文件");
                 revert_processing();
-                res->error_code = -4;
+                res->error_code = cloud_soul::Err::MemArchive::PROCESSING_OPEN_FAILED;
                 return;
             }
             std::stringstream ss;
@@ -429,9 +430,9 @@ void MemoryNode::on_archive(
             api_ok = true;
         }
         if (!api_ok) {
-            RCLCPP_ERROR(get_logger(), "大模型调用失败或返回格式错误");
+            RCLCPP_ERROR(get_logger(), cloud_soul::Msg::LLM_FAILED);
             revert_processing();
-            res->error_code = -5;
+            res->error_code = cloud_soul::Err::MemArchive::LLM_FAILED;
             return;
         }
 
@@ -441,16 +442,16 @@ void MemoryNode::on_archive(
         if (ec) {
             RCLCPP_ERROR(get_logger(), "创建 diaries 目录失败");
             revert_processing();
-            res->error_code = -6;
+            res->error_code = cloud_soul::Err::MemArchive::DIARY_DIR_FAILED;
             return;
         }
         fs::path diary_file = diaries_dir / (date_str + ".md");
         {
             std::ofstream ofs(diary_file, std::ios::app);
             if (!ofs) {
-                RCLCPP_ERROR(get_logger(), "打开日记文件失败");
+                RCLCPP_ERROR(get_logger(), cloud_soul::Msg::DIARY_OPEN_FAILED);
                 revert_processing();
-                res->error_code = -7;
+                res->error_code = cloud_soul::Err::MemArchive::DIARY_OPEN_FAILED;
                 return;
             }
             ofs << assistant_text << "\n";
@@ -459,9 +460,9 @@ void MemoryNode::on_archive(
         // ---- git add / commit / push ----
         git_repository *repo = nullptr;
         if (git_repository_open(&repo, repo_dir_.c_str()) != 0) {
-            RCLCPP_ERROR(get_logger(), "打开仓库失败");
+            RCLCPP_ERROR(get_logger(), cloud_soul::Msg::REPO_OPEN_FAILED);
             revert_processing();
-            res->error_code = -8;
+            res->error_code = cloud_soul::Err::MemArchive::GIT_OPEN_FAILED;
             return;
         }
 
@@ -470,18 +471,18 @@ void MemoryNode::on_archive(
             RCLCPP_ERROR(get_logger(), "获取 index 失败");
             git_repository_free(repo);
             revert_processing();
-            res->error_code = -9;
+            res->error_code = cloud_soul::Err::MemArchive::GIT_INDEX_FAILED;
             return;
         }
 
-        std::string rel_path = "diaries/" + date_str + ".md";
+        std::string rel_path = std::string(cloud_soul::DIARIES_REL_DIR) + "/" + date_str + ".md";
         if (git_index_add_bypath(index, rel_path.c_str()) != 0) {
             const git_error *e = git_error_last();
             RCLCPP_ERROR(get_logger(), "git add 失败：%s", e ? e->message : "?");
             git_index_free(index);
             git_repository_free(repo);
             revert_processing();
-            res->error_code = -10;
+            res->error_code = cloud_soul::Err::MemArchive::GIT_ADD_FAILED;
             return;
         }
         if (git_index_write(index) != 0) {
@@ -490,7 +491,7 @@ void MemoryNode::on_archive(
             git_index_free(index);
             git_repository_free(repo);
             revert_processing();
-            res->error_code = -11;
+            res->error_code = cloud_soul::Err::MemArchive::GIT_IDX_WRITE_FAILED;
             return;
         }
 
@@ -501,7 +502,7 @@ void MemoryNode::on_archive(
             git_index_free(index);
             git_repository_free(repo);
             revert_processing();
-            res->error_code = -12;
+            res->error_code = cloud_soul::Err::MemArchive::GIT_TREE_WRITE_FAILED;
             return;
         }
         git_tree *tree = nullptr;
@@ -511,7 +512,7 @@ void MemoryNode::on_archive(
             git_index_free(index);
             git_repository_free(repo);
             revert_processing();
-            res->error_code = -13;
+            res->error_code = cloud_soul::Err::MemArchive::GIT_TREE_LOOKUP_FAILED;
             return;
         }
         git_index_free(index);
@@ -545,7 +546,7 @@ void MemoryNode::on_archive(
             RCLCPP_ERROR(get_logger(), "git commit 失败：%s", e ? e->message : "?");
             git_repository_free(repo);
             revert_processing();
-            res->error_code = -14;
+            res->error_code = cloud_soul::Err::MemArchive::GIT_COMMIT_FAILED;
             return;
         }
 
@@ -554,11 +555,11 @@ void MemoryNode::on_archive(
             RCLCPP_ERROR(get_logger(), "查找远端 %s 失败", repo_name_.c_str());
             git_repository_free(repo);
             revert_processing();
-            res->error_code = -15;
+            res->error_code = cloud_soul::Err::MemArchive::GIT_REMOTE_FAILED;
             return;
         }
 
-        std::string push_refspec = "refs/heads/" + repo_fork_ + ":refs/heads/" + repo_fork_;
+        std::string push_refspec = cloud_soul::REFS_HEADS_PREFIX + repo_fork_ + ":refs/heads/" + repo_fork_;
         git_push_options push_opts = GIT_PUSH_OPTIONS_INIT;
         push_opts.callbacks.credentials = ssh_cred_callback;
 
@@ -567,7 +568,7 @@ void MemoryNode::on_archive(
         int push_err = git_remote_push(remote, &ref_array, &push_opts);
 
         if (push_err == 0) {
-            RCLCPP_INFO(get_logger(), "推送成功");
+            RCLCPP_INFO(get_logger(), cloud_soul::Msg::PUSH_SUCCESS);
             success = true;
         } else {
             const git_error *e = git_error_last();
@@ -581,11 +582,11 @@ void MemoryNode::on_archive(
                 RCLCPP_INFO(get_logger(), "检测到远程更新，重新拉取并重试...");
                 // 重新拉取后重试，但保留 .processing 文件不变
             } else {
-                RCLCPP_ERROR(get_logger(), "推送失败，不再重试");
+                RCLCPP_ERROR(get_logger(), cloud_soul::Msg::PUSH_FAILED_NO_RETRY);
                 git_remote_free(remote);
                 git_repository_free(repo);
                 revert_processing();
-                res->error_code = -16;
+                res->error_code = cloud_soul::Err::MemArchive::GIT_PUSH_FAILED;
                 return;
             }
         }
@@ -596,7 +597,7 @@ void MemoryNode::on_archive(
     if (!success) {
         // 如果重试耗尽仍未成功，恢复文件
         revert_processing();
-        res->error_code = -17;
+        res->error_code = cloud_soul::Err::MemArchive::PUSH_RETRY_EXHAUSTED;
         return;
     }
 
@@ -607,7 +608,7 @@ void MemoryNode::on_archive(
         RCLCPP_ERROR(get_logger(), "重命名为 .done 失败：%s", ec.message().c_str());
         // 此时 .processing 仍存在，尝试恢复为原始文件
         revert_processing();
-        res->error_code = -18;
+        res->error_code = cloud_soul::Err::MemArchive::DONE_RENAME_FAILED;
         return;
     }
 

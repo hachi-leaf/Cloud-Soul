@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Leaf
+// Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 
 // 节点: /<agent_name>/output_mgmt_node
@@ -43,6 +43,7 @@
 
 #include "cs_interfaces/srv/get_tools_info.hpp"
 #include "cs_interfaces/action/execute_tool.hpp"
+#include "cs_interfaces/constants.hpp"
 
 using namespace std::chrono_literals;
 using GetToolsInfo = cs_interfaces::srv::GetToolsInfo;
@@ -111,7 +112,7 @@ public:
       std::chrono::duration<double>(discovery_period),
       std::bind(&AgentOutputMgmt::discover_tools, this));
     cleanup_timer_ = this->create_wall_timer(
-      2s, std::bind(&AgentOutputMgmt::cleanup_tools, this));
+      cloud_soul::CLEANUP_INTERVAL, std::bind(&AgentOutputMgmt::cleanup_tools, this));
 
     RCLCPP_INFO(this->get_logger(), "Agent output mgmt started for namespace: %s", agent_name_.c_str());
   }

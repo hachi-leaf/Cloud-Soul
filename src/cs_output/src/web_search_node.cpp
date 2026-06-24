@@ -1,6 +1,8 @@
-// Copyright (c) 2026 Leaf
+// Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 
+
+// TODO: Sogou/Bing 搜索 HTML 解析器未实现，目前仅 360 搜索可用。见 handle_search() 中 Sogou/Bing continue 分支。
 // 节点: /<agent_name>/output/web_search
 // 作用: 多功能网页搜索与信息获取工具（免 Token，免注册，纯公开接口）
 //       支持: search, wikipedia, image_search, image_download, file_download,

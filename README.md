@@ -13,21 +13,21 @@ ROS2-based AI agent runtime. One agent, multiple terminals, cloud-synced memory.
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ```
                   ┌─────────────┐
                   │  LLM (API)  │
                   └──────┬──────┘
                          │
-┌────────────┐    ┌──────┴──────┐    ┌─────────────────────────────┐
-│  cs_input  │───→│   cs_core    │───→│         cs_output            │
-│            │    │              │    │                              │
+┌────────────┐    ┌──────┴───────┐    ┌─────────────────────────────┐
+│  cs_input  │───→│   cs_core    │───→│         cs_output           │
+│            │    │              │    │                             │
 │ system_    │    │ agent_loop   │    │ shell_exec    file_read     │
 │ status     │    │ memory_node  │    │ file_write    message_send  │
-│ message_   │    │ call_openai  │    │ web_search                  │
-│ receive    │    │              │    │                              │
-│ input_mgmt │    │ Git repo ↔   │    │ output_mgmt                  │
+│ message_   │    │ call_openai  │    │ web_search    web_chat      │
+│ receive    │    │              │    │                             │
+│ input_mgmt │    │ Git repo ↔   │    │ output_mgmt                 │
 └────────────┘    │  cognitions  │    └─────────────────────────────┘
                   │  diaries     │
                   └──────────────┘
@@ -39,14 +39,14 @@ Three packages, connected via ROS2 action `/agent_loop/_action/execute_tool`:
 |---------|------|
 | `cs_input` | Sensors: system status, user message subscription |
 | `cs_core` | Agent loop (LLM ⇄ tools), Git-based memory |
-| `cs_output` | Tools: shell, file I/O, messaging, web search |
+| `cs_output` | Tools: shell, file I/O, messaging, web search, web chat |
 
 ---
 
-## How It Works
+## ⚙️ How It Works
 
 ```
-  system_status ──┐
+  system_status  ──┐
   message_receive ─┤
                    ├──→ input_mgmt (snapshot) ──→ agent_loop
                    │                                  │
@@ -70,58 +70,53 @@ Three packages, connected via ROS2 action `/agent_loop/_action/execute_tool`:
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
-**Prerequisites**: Ubuntu 22.04, ROS2 Humble, DeepSeek API key (or compatible endpoint).
+**Prerequisites**: Ubuntu 22.04, ROS2 Humble, a DeepSeek-compatible API key.
 
 ```bash
-# deps
+# system deps
 sudo apt install ros-humble-desktop libgit2-dev libcurl4-openssl-dev \
-  nlohmann-json3-dev libxml2-dev
+  nlohmann-json3-dev libxml2-dev s-nail python3-yaml
 
-# build
-git clone git@github.com:hachi-leaf/Cloud-Soul.git
+# clone & build
+git clone git@github.com:your-org/Cloud-Soul.git
 cd Cloud-Soul
 colcon build --symlink-install
 ```
 
-**Memory repo** — fork [Adam-Soul](https://github.com/hachi-leaf/Adam-Soul), configure SSH push.
+**Memory repo** — fork [cloud-soul-memory](https://github.com/your-org/cloud-soul-memory), configure SSH push.
 
-**Launch**:
+**One-time setup** (interactive wizard):
 
 ```bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-export OPENAI_API_KEY=sk-xxx
-export OPENAI_BASE_URL=https://api.deepseek.com/v1
-export OPENAI_MODEL=deepseek-chat
-
-ros2 run cs_core memory_node --ros-args \
-  -p repo_url:="git@github.com:your/agent-soul.git" \
-  -p repo_dir:="$HOME/.adam/soul_repo" &
-
-ros2 run cs_input system_status_node &
-ros2 run cs_input message_receive_node --ros-args \
-  -p topic_name:="/adam/input/message_receive" &
-
-ros2 run cs_input input_mgmt_node &
-ros2 run cs_output output_mgmt_node &
-ros2 run cs_output shell_exec_node &
-ros2 run cs_output file_read_node &
-ros2 run cs_output file_write_node &
-ros2 run cs_output message_send_node &
-ros2 run cs_output web_search_node &
-
-ros2 run cs_core agent_loop_node
+./config
 ```
+
+Creates `~/.cloudsoul/config.yaml` with agent name, API credentials, repo URL, and all tuning parameters.
+
+**Launch everything** (one command):
+
+```bash
+./start
+```
+
+This starts `cs_input`, `cs_output`, `cs_core`, and `web_chat` (Flask SSE on port 8080). Logs go to `/tmp/cloudsoul_*.log`.
+
+**Run as root** (for system-level access):
+
+```bash
+sudo -E ./start
+```
+
+All nodes support `respawn=True` — ROS2 auto-restarts crashed nodes.
 
 ---
 
-## Memory Model
+## 🧠 Memory Model
 
 ```
-~/.adam/soul_repo/
+~/.cloudsoul/soul_repo/
 ├── prompts/
 │   ├── RULE.md        # system prompt (refs [cognitions/*.md])
 │   └── COMPRESS.md    # compression prompt
@@ -136,7 +131,7 @@ ros2 run cs_core agent_loop_node
 
 ---
 
-## Nodes
+## 🔌 Nodes
 
 ### cs_core
 
@@ -150,8 +145,8 @@ ros2 run cs_core agent_loop_node
 | Node | Topic | Description |
 |------|-------|-------------|
 | `system_status_node` | `/{agent}/input/system_status` | CPU, MEM, disk, net, hostname, machine-id (1 Hz) |
-| `message_receive_node` | `/{agent}/input/message_receive` | ROS2 String subscriber |
-| `input_mgmt_node` | `/{agent}/input/snapshot` (srv) | Aggregates sensor data |
+| `message_receive_node` | `/{agent}/input/message_receive` | ROS2 / web_chat message receiver |
+| `input_mgmt_node` | `/{agent}/input` (srv) | Aggregates sensor data into snapshot |
 
 ### cs_output
 
@@ -160,35 +155,40 @@ ros2 run cs_core agent_loop_node
 | `shell_exec_node` | execute_tool | Shell command execution |
 | `file_read_node` | execute_tool | File read (offset/length/encoding) |
 | `file_write_node` | execute_tool | File write (overwrite/append) |
-| `message_send_node` | execute_tool | Email (s-nail) or ROS2 publish |
-| `web_search_node` | execute_tool | HTTP GET, multi-engine fallback |
-| `output_mgmt_node` | execute_tool | Routes calls to tools |
+| `message_send_node` | execute_tool | Email (s-nail), ROS2 publish, or web_chat reply |
+| `web_search_node` | execute_tool | Web search with multi-engine fallback |
+| `web_chat_server.py` | (Flask SSE) | Browser-based chat interface (port 8080) |
+| `output_mgmt_node` | execute_tool | Auto-discovers and routes calls to tool nodes |
 
 ---
 
-## Configuration
+## 🔧 Configuration
+
+All parameters live in `~/.cloudsoul/config.yaml` (generated by `./config`).
 
 | Parameter | Node | Default |
 |-----------|------|---------|
-| `agent_name` | all | `adam` |
-| `repo_url` | memory_node | — required |
-| `repo_dir` | memory_node | `~/.adam/soul_repo` |
-| `max_context_tokens` | agent_loop_node | `200000` |
-| `summary_turns` | agent_loop_node | `30` |
-| `topic_name` | message_receive_node | `/adam/input/message_receive` |
+| `agent_name` | all | `agent` |
+| `repo.url` | memory_node | — required |
+| `loop.max_context_tokens` | agent_loop_node | `200000` |
+| `loop.summary_turns` | agent_loop_node | `25` |
+| `loop.tool_timeout` | cs_core / cs_output | `60.0` |
+| `input.info_timeout` | input mgmt | `3.0` |
+| `output.info_timeout` | output mgmt | `3.0` |
 
-Environment: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`.
-
----
-
-## Customization
-
-1. Fork [Adam-Soul](https://github.com/hachi-leaf/Adam-Soul), edit `cognitions/`
-2. Add tools: new node in `cs_output/src/`, register in `output_mgmt_node.cpp`
-3. Add sensors: new node in `cs_input/src/`, register in `input_mgmt_node.cpp`
+LLM settings are configured inside the `llms` list in `config.yaml`; the `default_llm` field picks the active one.
 
 ---
 
-## License
+## 🎨 Customization
+
+1. Fork [cloud-soul-memory](https://github.com/your-org/cloud-soul-memory), edit `cognitions/`
+2. Add tools: create a node in `cs_output/src/` that publishes `/{agent}/output/<name>/info` (JSON tool descriptor, `std_msgs/String`, QoS transient_local). `output_mgmt_node` auto-discovers it.
+3. Add sensors: create a node in `cs_input/src/` that publishes `/{agent}/input/<name>/info` (`InputInfo` msg, QoS transient_local) and data on `/{agent}/input/<name>`. `input_mgmt_node` auto-discovers it.
+4. `cs_interfaces/include/cs_interfaces/constants.hpp` — all timeouts, error codes, and message strings in one place
+
+---
+
+## 📄 License
 
 MIT

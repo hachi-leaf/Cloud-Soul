@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Leaf
+// Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 
 // 节点: /<agent_name>/system_status_node (输入源节点，由 input_mgmt_node 自动发现)

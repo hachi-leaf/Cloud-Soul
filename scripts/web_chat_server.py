@@ -33,7 +33,7 @@ from cs_interfaces.srv import SendMessage
 
 # ------- 命令行参数 -------
 parser = argparse.ArgumentParser(description='Web Chat Server')
-parser.add_argument('--agent', default='agent_test', help='Agent 名称 (默认: agent_test)')
+parser.add_argument('--agent', default='agent', help='Agent 名称 (默认: agent)')
 parser.add_argument('--port', type=int, default=8080, help='监听端口 (默认: 8080)')
 args = parser.parse_args()
 

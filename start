@@ -127,7 +127,7 @@ fi
 WEB_CHAT_PORT=8080   # 提前定义，保证 force_cleanup 里能用
 
 force_cleanup() {
-    echo "🧹 强力清理 ..."
+    echo "🧹 清理进程 ..."
     # 1. 常规 pkill（找不到进程也不报错）
     pkill -f "agent_name:=$AGENT_NAME" 2>/dev/null || true
     pkill -f "web_chat_server.py" 2>/dev/null || true
@@ -151,6 +151,8 @@ force_cleanup() {
 # ═══════════════════════════════════════════════════════
 echo "🧹 清理旧的 $AGENT_NAME 进程..."
 force_cleanup
+echo "🧹 清理日志 ..."
+rm -f /tmp/cloudsoul_*.log
 
 # ═══════════════════════════════════════════════════════
 #  启动 cs_input

@@ -1,3 +1,6 @@
+# Copyright (c) leaf
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 output_mgmt_node 功能测试脚本（中文版，修复断言空格问题）

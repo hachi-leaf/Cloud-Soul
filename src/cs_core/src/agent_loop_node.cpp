@@ -5,7 +5,7 @@
 // 节点: /<agent_name>/agent_loop
 // 作用: Agent 主循环，执行感知 -> 决策 -> 行动 的无限思考闭环。
 //
-// 上下文拼接规范（第一性原理）:
+// 上下文拼接规范:
 //   [system] 记忆系统提示词
 //   [assistant] 主动思考 / 工具调用 ...  ← 零号思考，不依赖快照
 //   [user] 工具返回 (OpenAI role: tool)
@@ -41,6 +41,7 @@
 #include <cs_interfaces/srv/memory_archive.hpp>
 #include <cs_interfaces/action/execute_tool.hpp>
 #include <cs_core/call_openai.hpp>
+#include <cs_interfaces/constants.hpp>
 #include <nlohmann/json.hpp>
 
 #include <chrono>
@@ -62,7 +63,7 @@ using MemoryRecall  = cs_interfaces::srv::MemoryRecall;
 using MemoryArchive = cs_interfaces::srv::MemoryArchive;
 using ExecuteTool   = cs_interfaces::action::ExecuteTool;
 
-static const char COMPRESSION_REMINDER[] = "记忆压缩完成，请基于当前系统提示词和对话摘要，继续为用户提供帮助。";
+
 
 class AgentLoopNode : public rclcpp::Node {
 public:
@@ -71,14 +72,14 @@ public:
   {
     // 参数声明
     agent_name_   = declare_parameter<std::string>("agent_name", "");
-    std::string raw_dir = declare_parameter<std::string>("context_dir", "~/.cloud_soul/contexts");
+    std::string raw_dir = declare_parameter<std::string>("context_dir", "~/.cloudsoul/contexts");
     max_context_tokens_ = declare_parameter<int>("max_context_tokens", 200000);
     summary_turns_      = declare_parameter<int>("summary_turns", 30);
     loop_rate_          = declare_parameter<double>("loop_rate", 0.0);
-    tool_timeout_       = declare_parameter<double>("tool_timeout", 60.0);
+    tool_timeout_duration_ = std::chrono::duration<double>(declare_parameter<double>("tool_timeout", 60.0));
     openai_base_url_    = declare_parameter<std::string>("openai_base_url", "https://api.deepseek.com");
     openai_api_key_     = declare_parameter<std::string>("openai_api_key", "");
-    openai_model_       = declare_parameter<std::string>("openai_model", "deepseek-v4-pro");
+    openai_model_       = declare_parameter<std::string>("openai_model", "deepseek-chat");
 
     if (agent_name_.empty()) {
       RCLCPP_FATAL(get_logger(), "agent_name 参数不能为空");
@@ -152,15 +153,15 @@ private:
     auto now = std::chrono::system_clock::now();
     std::time_t tt = std::chrono::system_clock::to_time_t(now);
     std::tm* gmt = std::gmtime(&tt);
-    char buf[32];
+    char buf[cloud_soul::TIMESTAMP_BUF_SIZE];
     std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", gmt);
     return context_dir_ + "/Z_" + buf + "_" + agent_name_ + ".json";
   }
 
   template <typename T>
   void wait_for_service(typename rclcpp::Client<T>::SharedPtr client, const std::string& name) {
-    while (rclcpp::ok() && !client->wait_for_service(2s)) {
-      std::this_thread::sleep_for(500ms);
+    while (rclcpp::ok() && !client->wait_for_service(cloud_soul::SERVICE_WAIT_TIMEOUT)) {
+      std::this_thread::sleep_for(cloud_soul::SERVICE_RETRY_INTERVAL);
     }
   }
 
@@ -170,11 +171,11 @@ private:
     while (rclcpp::ok()) {
       auto req = std::make_shared<typename ServiceT::Request>();
       auto future = client->async_send_request(req);
-      if (future.wait_for(5s) == std::future_status::ready) {
+      if (future.wait_for(cloud_soul::ACTION_REQUEST_TIMEOUT) == std::future_status::ready) {
         auto resp = future.get();
         if (resp) return resp;
       }
-      std::this_thread::sleep_for(1s);
+      std::this_thread::sleep_for(cloud_soul::SERVICE_RETRY_INTERVAL);
     }
     return nullptr;
   }
@@ -209,7 +210,7 @@ private:
   int estimate_tokens(const std::vector<nlohmann::json>& msgs) {
     size_t total = 0;
     for (const auto& m : msgs) total += m.dump().size();
-    return static_cast<int>(total / 4);
+    return static_cast<int>(total / cloud_soul::TOKEN_ESTIMATE_DIVISOR);
   }
 
   // ---------------------------------------------------------------
@@ -263,7 +264,7 @@ private:
     if (!last.contains("tool_calls") || !last["tool_calls"].is_array() || last["tool_calls"].empty())
       return false;
 
-    RCLCPP_WARN(get_logger(), "发现未完成的工具调用，将重新执行");
+    RCLCPP_WARN(get_logger(), cloud_soul::Msg::INCOMPLETE_TOOL_FOUND);
 
     for (const auto& tc : last["tool_calls"]) {
       std::string func = tc["function"]["name"];
@@ -302,17 +303,24 @@ private:
       std::ifstream ifs(context_file_path_);
       if (ifs) {
         try {
-          auto j = nlohmann::json::parse(ifs);
+          // 读入原始文本，修复因 save_context 中断导致的末尾逗号截断
+          std::string raw_json((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+          size_t last_char = raw_json.find_last_not_of(" \t\n\r");
+          if (last_char != std::string::npos && raw_json[last_char] == ',') {
+            RCLCPP_WARN(get_logger(), "JSON 末尾为逗号（截断），自动修正为 ]");
+            raw_json[last_char] = ']';
+          }
+          auto j = nlohmann::json::parse(raw_json);
           if (j.is_array()) {
             messages_ = j.get<std::vector<nlohmann::json>>();
             if (recover_incomplete_tool_call()) {
-              RCLCPP_INFO(get_logger(), "已恢复未完成的工具调用");
+              RCLCPP_INFO(get_logger(), cloud_soul::Msg::RECOVERED_TOOL_CALL);
             }
             RCLCPP_INFO(get_logger(), "从文件恢复 %zu 条消息", messages_.size());
             return;
           }
         } catch (...) {
-          RCLCPP_WARN(get_logger(), "上下文文件解析失败，将创建新上下文");
+          RCLCPP_WARN(get_logger(), cloud_soul::Msg::CONTEXT_PARSE_FAILED);
         }
       }
     }
@@ -327,46 +335,77 @@ private:
   // 工具执行（带安全 JSON 解析）
   // ---------------------------------------------------------------
   nlohmann::json execute_tool(const std::string& name, const std::string& arguments_json) {
-    if (!action_client_->wait_for_action_server(2s)) {
-      return {{"error", "动作服务器未就绪"}};
-    }
-
-    // ★ 安全解析 LLM 提供的参数
+    // 预解析参数（只做一次）
     nlohmann::json args;
     try {
       args = nlohmann::json::parse(arguments_json);
     } catch (const std::exception& e) {
       RCLCPP_WARN(get_logger(), "工具参数解析失败: %s", e.what());
-      return {{"error", std::string("工具参数 JSON 无效: ") + e.what()}};
+      return {{"error", std::string(cloud_soul::Msg::TOOL_PARAM_INVALID) + e.what()}};
     }
 
     auto goal = ExecuteTool::Goal();
     nlohmann::json call_obj = {{"name", name}, {"arguments", args}};
     goal.input_json = call_obj.dump();
 
-    auto send_future = action_client_->async_send_goal(goal);
-    if (send_future.wait_for(5s) != std::future_status::ready) {
-      return {{"error", "工具调用超时"}};
+    // 带重试的工具调用循环
+    for (int attempt = 1; attempt <= cloud_soul::TOOL_RETRY_MAX; ++attempt) {
+      if (!action_client_->wait_for_action_server(2s)) {
+        if (attempt < cloud_soul::TOOL_RETRY_MAX) {
+          RCLCPP_WARN(get_logger(), cloud_soul::Msg::TOOL_RETRY_MSG, attempt, cloud_soul::TOOL_RETRY_MAX);
+          std::this_thread::sleep_for(cloud_soul::TOOL_RETRY_INTERVAL);
+          continue;
+        }
+        return {{"error", cloud_soul::Msg::ACTION_SRV_NOT_READY}};
+      }
+
+      auto send_future = action_client_->async_send_goal(goal);
+      if (send_future.wait_for(cloud_soul::ACTION_REQUEST_TIMEOUT) != std::future_status::ready) {
+        if (attempt < cloud_soul::TOOL_RETRY_MAX) {
+          RCLCPP_WARN(get_logger(), cloud_soul::Msg::TOOL_RETRY_MSG, attempt, cloud_soul::TOOL_RETRY_MAX);
+          std::this_thread::sleep_for(cloud_soul::TOOL_RETRY_INTERVAL);
+          continue;
+        }
+        return {{"error", cloud_soul::Msg::TOOL_CALL_TIMEOUT}};
+      }
+      auto goal_handle = send_future.get();
+      if (!goal_handle) {
+        if (attempt < cloud_soul::TOOL_RETRY_MAX) {
+          RCLCPP_WARN(get_logger(), cloud_soul::Msg::TOOL_RETRY_MSG, attempt, cloud_soul::TOOL_RETRY_MAX);
+          std::this_thread::sleep_for(cloud_soul::TOOL_RETRY_INTERVAL);
+          continue;
+        }
+        return {{"error", cloud_soul::Msg::TOOL_GOAL_REJECTED}};
+      }
+      auto result_future = action_client_->async_get_result(goal_handle);
+      if (result_future.wait_for(tool_timeout_duration_) != std::future_status::ready) {
+        if (attempt < cloud_soul::TOOL_RETRY_MAX) {
+          RCLCPP_WARN(get_logger(), cloud_soul::Msg::TOOL_RETRY_MSG, attempt, cloud_soul::TOOL_RETRY_MAX);
+          std::this_thread::sleep_for(cloud_soul::TOOL_RETRY_INTERVAL);
+          continue;
+        }
+        return {{"error", cloud_soul::Msg::TOOL_EXEC_TIMEOUT}};
+      }
+      auto result = result_future.get();
+      if (result.code != rclcpp_action::ResultCode::SUCCEEDED) {
+        if (attempt < cloud_soul::TOOL_RETRY_MAX) {
+          RCLCPP_WARN(get_logger(), cloud_soul::Msg::TOOL_RETRY_MSG, attempt, cloud_soul::TOOL_RETRY_MAX);
+          std::this_thread::sleep_for(cloud_soul::TOOL_RETRY_INTERVAL);
+          continue;
+        }
+        return {{"error", cloud_soul::Msg::TOOL_EXEC_FAILED}};
+      }
+
+      std::string raw = result.result->output_json;
+      std::string safe = sanitize_json_string(raw);
+      try {
+        return nlohmann::json::parse(safe);
+      } catch (...) {
+        return {{"error", cloud_soul::Msg::TOOL_OUTPUT_INVALID}};
+      }
     }
-    auto goal_handle = send_future.get();
-    if (!goal_handle) {
-      return {{"error", "目标被拒绝"}};
-    }
-    auto result_future = action_client_->async_get_result(goal_handle);
-    if (result_future.wait_for(std::chrono::duration<double>(tool_timeout_)) != std::future_status::ready) {
-      return {{"error", "工具执行超时"}};
-    }
-    auto result = result_future.get();
-    if (result.code != rclcpp_action::ResultCode::SUCCEEDED) {
-      return {{"error", "工具执行失败"}};
-    }
-    std::string raw = result.result->output_json;
-    std::string safe = sanitize_json_string(raw);
-    try {
-      return nlohmann::json::parse(safe);
-    } catch (...) {
-      return {{"error", "工具输出 JSON 无效"}};
-    }
+
+    return {{"error", cloud_soul::Msg::TOOL_EXEC_FAILED}};
   }
 
   // ---------------------------------------------------------------
@@ -431,6 +470,8 @@ private:
     save_context();
 
     if (!has_tool_calls) {
+      messages_.push_back({{"role", "user"}, {"content", cloud_soul::Msg::NO_CHANNEL_REMINDER}});
+      save_context();
       refresh_client(client);
       return;
     }
@@ -493,7 +534,7 @@ private:
       auto req = std::make_shared<MemoryArchive::Request>();
       req->json_path = context_file_path_;
       auto future = archive_client_->async_send_request(req);
-      if (future.wait_for(180s) == std::future_status::ready) {
+      if (future.wait_for(cloud_soul::COMPRESS_SERVICE_TIMEOUT) == std::future_status::ready) {
         auto resp = future.get();
         if (resp && resp->error_code == 0) break;
       }
@@ -506,12 +547,12 @@ private:
     for (size_t i = turns.size() - keep; i < turns.size(); ++i)
       recent.insert(recent.end(), turns[i].begin(), turns[i].end());
 
-    const size_t MAX_TOOL_CONTENT_LEN = 2000;
+    constexpr size_t LOCAL_MAX_TOOL_CONTENT_LEN = cloud_soul::MAX_TOOL_CONTENT_LEN;
     for (auto& msg : recent) {
       if (msg.value("role", "") == "tool" && msg.contains("content")) {
         std::string content = msg["content"].get<std::string>();
-        if (content.size() > MAX_TOOL_CONTENT_LEN) {
-          content = content.substr(0, MAX_TOOL_CONTENT_LEN) + "\n...[工具输出已截断]";
+        if (content.size() > LOCAL_MAX_TOOL_CONTENT_LEN) {
+          content = content.substr(0, LOCAL_MAX_TOOL_CONTENT_LEN) + "\n...[工具输出已截断]";
           msg["content"] = content;
         }
       }
@@ -533,7 +574,7 @@ private:
     messages_.clear();
     messages_.push_back({{"role", "system"}, {"content", rule + "\n\n[对话摘要]\n" + summary}});
     for (auto& m : recent) messages_.push_back(std::move(m));
-    messages_.push_back({{"role", "user"}, {"content", COMPRESSION_REMINDER}});
+    messages_.push_back({{"role", "user"}, {"content", cloud_soul::Msg::COMPRESSION_REMINDER}});
 
     context_file_path_ = create_new_context_filename();
     save_context();
@@ -549,7 +590,7 @@ private:
     wait_for_service<MemoryRecall>(recall_client_, "memory_recall");
     wait_for_service<MemoryArchive>(archive_client_, "memory_archive");
     if (!action_client_->wait_for_action_server(2s)) {
-      RCLCPP_WARN(get_logger(), "输出动作服务器未就绪，将在后续调用时重试");
+      RCLCPP_WARN(get_logger(), cloud_soul::Msg::OUTPUT_ACTION_NOT_RDY);
     }
 
     initialize_messages();
@@ -571,7 +612,7 @@ private:
         std::string h = std::to_string(std::hash<std::string>{}(snapshot));
         if (h == last_hash) {
           if (loop_rate_ <= 0.0) {
-            std::this_thread::sleep_for(1s);
+            std::this_thread::sleep_for(cloud_soul::SERVICE_RETRY_INTERVAL);
           }
           continue;
         }
@@ -580,7 +621,7 @@ private:
         save_context();
       } else {
         if (loop_rate_ <= 0.0) {
-          std::this_thread::sleep_for(1s);
+          std::this_thread::sleep_for(cloud_soul::SERVICE_RETRY_INTERVAL);
           continue;
         } else {
           std::this_thread::sleep_for(std::chrono::duration<double>(1.0 / loop_rate_));
@@ -623,7 +664,7 @@ private:
   int max_context_tokens_;
   int summary_turns_;
   double loop_rate_;
-  double tool_timeout_;
+  std::chrono::duration<double> tool_timeout_duration_;
   std::string openai_base_url_;
   std::string openai_api_key_;
   std::string openai_model_;

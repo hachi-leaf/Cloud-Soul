@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Leaf
+// Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 
 // 节点: /<agent_name>/file_write_node (工具节点，由 output_mgmt_node 自动发现)

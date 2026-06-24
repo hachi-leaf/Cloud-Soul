@@ -1,3 +1,6 @@
+# Copyright (c) leaf
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 测试脚本：web_search_node 工具节点功能验证

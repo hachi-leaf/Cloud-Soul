@@ -1,9 +1,12 @@
+# Copyright (c) leaf
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 cs_core.launch.py — 启动 memory_node 和 agent_loop_node
-用法: ros2 launch cs_core cs_core.launch.py agent_name:=agent_test \
-        repo_url:=https://github.com/hachi-leaf/Adam-Soul \
-        repo_dir:=/home/leaf-jammy/.cloudsoul/soul \
+用法: ros2 launch cs_core cs_core.launch.py agent_name:=agent \
+        repo_url:=https://github.com/your-org/your-memory-repo \
+        repo_dir:=~/.cloudsoul/soul \
         openai_base_url:=https://api.deepseek.com \
         openai_api_key:=sk-xxx
 """
@@ -16,7 +19,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     # ── 共享参数 ──
-    agent_name        = LaunchConfiguration('agent_name',         default='agent_test')
+    agent_name        = LaunchConfiguration('agent_name',         default='agent')
     repo_url          = LaunchConfiguration('repo_url',           default='')
     repo_name         = LaunchConfiguration('repo_name',          default='origin')
     repo_fork         = LaunchConfiguration('repo_fork',          default='main')
@@ -32,7 +35,7 @@ def generate_launch_description():
     openai_model      = LaunchConfiguration('openai_model',       default='deepseek-v4-pro')
 
     return LaunchDescription([
-        DeclareLaunchArgument('agent_name',          default_value='agent_test'),
+        DeclareLaunchArgument('agent_name',          default_value='agent'),
         DeclareLaunchArgument('repo_url',            default_value=''),
         DeclareLaunchArgument('repo_name',           default_value='origin'),
         DeclareLaunchArgument('repo_fork',           default_value='main'),

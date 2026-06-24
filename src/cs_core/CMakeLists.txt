@@ -24,6 +24,7 @@ add_executable(memory_node
 
 target_include_directories(memory_node PRIVATE
   include
+  ${cs_interfaces_INCLUDE_DIRS}
   ${LIBGIT2_INCLUDE_DIRS}
   ${CURL_INCLUDE_DIRS}
 )
@@ -51,6 +52,7 @@ add_executable(agent_loop_node
 
 target_include_directories(agent_loop_node PRIVATE
   include
+  ${cs_interfaces_INCLUDE_DIRS}
   ${CURL_INCLUDE_DIRS}
 )
 
@@ -69,6 +71,7 @@ ament_target_dependencies(agent_loop_node
 install(TARGETS agent_loop_node
   DESTINATION lib/${PROJECT_NAME}
 )
+
 
 # ---------- launch ----------
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Leaf
+# Copyright (c) leaf
 # SPDX-License-Identifier: MIT
 """
 input_mgmt_node 全量功能测试脚本 (打印真实数据版)

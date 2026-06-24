@@ -1,3 +1,6 @@
+# Copyright (c) leaf
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 file_read_node 集成测试（真取消版，大文件 50MB）

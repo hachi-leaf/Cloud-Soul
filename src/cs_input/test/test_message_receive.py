@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Leaf
+# Copyright (c) leaf
 # SPDX-License-Identifier: MIT
 """
 message_receive_node 功能测试脚本

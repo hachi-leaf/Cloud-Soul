@@ -1,3 +1,6 @@
+# Copyright (c) leaf
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 message_send_node 集成测试
@@ -193,7 +196,7 @@ class Tester:
         self.log("测试 3: 真实邮件发送（发送给自己）")
         code, out, _ = self.test_cli.send_tool(TOOL_NAME, {
             "channel": "email",
-            "to": "zxy_yys_leaf@163.com",          # 你的邮箱
+            "to": "user@example.com",          # 收件人邮箱
             "subject": "CloudSoul 测试邮件",
             "body": "这封邮件由 message_send_node 发送，验证 s‑nail 正常工作。"
         }, timeout_sec=30.0, wait=30.0)

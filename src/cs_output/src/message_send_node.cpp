@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Leaf
+// Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 
 // 节点: /<agent_name>/message_send_node (工具节点，由 output_mgmt_node 自动发现)
@@ -61,6 +61,7 @@
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "cs_interfaces/action/execute_tool.hpp"
+#include "cs_interfaces/constants.hpp"
 
 using namespace std::chrono_literals;
 using ExecuteTool = cs_interfaces::action::ExecuteTool;
@@ -164,8 +165,8 @@ private:
       channel = extract_json_string(input_json, "channel");
       if (channel.empty()) throw std::runtime_error("missing channel");
     } catch (...) {
-      result->output_json = R"EOF({"error":"invalid input json or missing channel"})EOF";
-      result->exit_code = -1;
+      result->output_json = cloud_soul::Msg::JSON_INVALID_INPUT;
+      result->exit_code = cloud_soul::Err::MsgSend::INVALID_INPUT;
       goal_handle->abort(result);
       active_goals_.erase(goal_handle->get_goal_id());
       return;
@@ -178,8 +179,8 @@ private:
     } else if (channel == "web_chat") {
       handle_web_chat(input_json, result, goal_handle);
     } else {
-      result->output_json = R"EOF({"error":"unsupported channel"})EOF";
-      result->exit_code = -2;
+      result->output_json = cloud_soul::Msg::JSON_UNSUPPORTED_CHAN;
+      result->exit_code = cloud_soul::Err::MsgSend::UNSUPPORTED_CHAN;
       goal_handle->abort(result);
     }
 
@@ -191,8 +192,8 @@ private:
                     const std::shared_ptr<GoalHandleExecute> goal_handle) {
     // 检查 s-nail 是否可用
     if (system("command -v s-nail > /dev/null 2>&1") != 0) {
-      result->output_json = R"EOF({"error":"s-nail not installed"})EOF";
-      result->exit_code = -3;
+      result->output_json = cloud_soul::Msg::JSON_SNAIL_NOT_INST;
+      result->exit_code = cloud_soul::Err::MsgSend::SNAIL_UNAVAIL;
       goal_handle->abort(result);
       return;
     }
@@ -204,8 +205,8 @@ private:
       body = extract_json_string(input_json, "body");
       if (to.empty() || subject.empty()) throw std::runtime_error("missing fields");
     } catch (...) {
-      result->output_json = R"EOF({"error":"invalid email parameters"})EOF";
-      result->exit_code = -1;
+      result->output_json = cloud_soul::Msg::JSON_INVALID_EMAIL;
+      result->exit_code = cloud_soul::Err::MsgSend::INVALID_INPUT;
       goal_handle->abort(result);
       return;
     }
@@ -217,11 +218,11 @@ private:
 
     int ret = system(cmd.c_str());
     if (ret != 0) {
-      result->output_json = R"EOF({"error":"s-nail send failed"})EOF";
-      result->exit_code = -3;
+      result->output_json = cloud_soul::Msg::JSON_SNAIL_SEND_FAIL;
+      result->exit_code = cloud_soul::Err::MsgSend::SNAIL_UNAVAIL;
       goal_handle->abort(result);
     } else {
-      result->output_json = R"EOF({"status":"sent"})EOF";
+      result->output_json = cloud_soul::Msg::JSON_STATUS_SENT;
       result->exit_code = 0;
       goal_handle->succeed(result);
     }
@@ -235,8 +236,8 @@ private:
       message = extract_json_string(input_json, "message");
       if (message.empty()) throw std::runtime_error("missing message");
     } catch (...) {
-      result->output_json = R"EOF({"error":"invalid topic parameters"})EOF";
-      result->exit_code = -1;
+      result->output_json = cloud_soul::Msg::JSON_INVALID_TOPIC;
+      result->exit_code = cloud_soul::Err::MsgSend::INVALID_INPUT;
       goal_handle->abort(result);
       return;
     }
@@ -245,7 +246,7 @@ private:
     msg->data = message;
     topic_pub_->publish(std::move(msg));
 
-    result->output_json = R"EOF({"status":"published"})EOF";
+    result->output_json = cloud_soul::Msg::JSON_STATUS_PUBLISHED;
     result->exit_code = 0;
     goal_handle->succeed(result);
   }
@@ -258,8 +259,8 @@ private:
       message = extract_json_string(input_json, "message");
       if (message.empty()) throw std::runtime_error("missing message");
     } catch (...) {
-      result->output_json = R"EOF({"error":"invalid web_chat parameters"})EOF";
-      result->exit_code = -1;
+      result->output_json = cloud_soul::Msg::JSON_INVALID_WEBCHAT;
+      result->exit_code = cloud_soul::Err::MsgSend::INVALID_INPUT;
       goal_handle->abort(result);
       return;
     }
@@ -268,7 +269,7 @@ private:
     msg->data = message;
     web_chat_pub_->publish(std::move(msg));
 
-    result->output_json = R"EOF({"status":"published"})EOF";
+    result->output_json = cloud_soul::Msg::JSON_STATUS_PUBLISHED;
     result->exit_code = 0;
     goal_handle->succeed(result);
   }

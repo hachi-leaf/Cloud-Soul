@@ -1,7 +1,10 @@
+# Copyright (c) leaf
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 cs_input.launch.py — 启动所有 cs_input 节点
-用法: ros2 launch cs_input cs_input.launch.py agent_name:=agent_test
+用法: ros2 launch cs_input cs_input.launch.py agent_name:=agent
 """
 
 from launch import LaunchDescription
@@ -12,7 +15,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     # ── 共享参数 ──
-    agent_name      = LaunchConfiguration('agent_name',       default='agent_test')
+    agent_name      = LaunchConfiguration('agent_name',       default='agent')
     info_timeout    = LaunchConfiguration('info_timeout',     default='3.0')
     discovery_period= LaunchConfiguration('discovery_period', default='1.0')
     info_rate       = LaunchConfiguration('info_rate',        default='1.0')
@@ -20,7 +23,7 @@ def generate_launch_description():
     ros_channel     = LaunchConfiguration('ros_channel',      default='ros2_msg')
 
     return LaunchDescription([
-        DeclareLaunchArgument('agent_name',        default_value='agent_test'),
+        DeclareLaunchArgument('agent_name',        default_value='agent'),
         DeclareLaunchArgument('info_timeout',      default_value='3.0'),
         DeclareLaunchArgument('discovery_period',  default_value='1.0'),
         DeclareLaunchArgument('info_rate',         default_value='1.0'),

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Leaf
+// Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 
 // 节点: /<agent_name>/input_mgmt_node
@@ -48,6 +48,7 @@
 #include "std_msgs/msg/string.hpp"
 #include "cs_interfaces/msg/input_info.hpp"
 #include "cs_interfaces/srv/get_snapshot.hpp"
+#include "cs_interfaces/constants.hpp"
 
 using namespace std::chrono_literals;
 using GetSnapshot = cs_interfaces::srv::GetSnapshot;
@@ -109,7 +110,7 @@ public:
 
     // 定时清理超时输入源
     cleanup_timer_ = this->create_wall_timer(
-      2s,
+      cloud_soul::CLEANUP_INTERVAL,
       std::bind(&InputMgmtNode::cleanup_inputs, this),
       callback_group_);
 

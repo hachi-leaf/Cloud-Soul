@@ -1,7 +1,10 @@
+# Copyright (c) leaf
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 cs_output.launch.py — 启动所有 cs_output 工具节点
-用法: ros2 launch cs_output cs_output.launch.py agent_name:=agent_test
+用法: ros2 launch cs_output cs_output.launch.py agent_name:=agent
 """
 
 from launch import LaunchDescription
@@ -12,7 +15,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     # ── 共享参数（同包复用） ──
-    agent_name      = LaunchConfiguration('agent_name',       default='agent_test')
+    agent_name      = LaunchConfiguration('agent_name',       default='agent')
     info_period     = LaunchConfiguration('info_period',      default='1.0')   # 工具节点心跳周期
     tool_timeout    = LaunchConfiguration('tool_timeout',     default='60.0')
     info_timeout    = LaunchConfiguration('info_timeout',     default='3.0')
@@ -20,7 +23,7 @@ def generate_launch_description():
     topic_output    = LaunchConfiguration('topic_output',     default='raw_message')
 
     return LaunchDescription([
-        DeclareLaunchArgument('agent_name',        default_value='agent_test'),
+        DeclareLaunchArgument('agent_name',        default_value='agent'),
         DeclareLaunchArgument('info_period',       default_value='1.0'),
         DeclareLaunchArgument('tool_timeout',      default_value='60.0'),
         DeclareLaunchArgument('info_timeout',      default_value='3.0'),

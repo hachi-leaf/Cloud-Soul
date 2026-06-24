@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Leaf
+// Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 
 // 节点: /<agent_name>/shell_exec_node (工具节点，由 output_mgmt_node 自动发现)
@@ -34,6 +34,7 @@
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "cs_interfaces/action/execute_tool.hpp"
+#include "cs_interfaces/constants.hpp"
 
 using namespace std::chrono_literals;
 using ExecuteTool = cs_interfaces::action::ExecuteTool;
@@ -118,19 +119,19 @@ private:
       command = extract_json_string(input_json, "command");
       if (command.empty()) throw std::runtime_error("missing command");
     } catch (const std::exception & e) {
-      result->output_json = R"EOF({"error":"invalid input json or missing command"})EOF";
-      result->exit_code = -1;
+      result->output_json = cloud_soul::Msg::SHELL_JSON_INVALID_INPUT;
+      result->exit_code = cloud_soul::Err::ShellExec::INVALID_INPUT;
       goal_handle->abort(result);
       active_goals_.erase(goal_handle->get_goal_id());
       return;
     }
 
     // 创建临时脚本
-    char temp_filename[] = "/tmp/cloudsoul_shell_exec_XXXXXX";
+    char temp_filename[] = "/tmp/cloudsoul_shell_exec_XXXXXX";  // cloud_soul::SHELL_TEMP_TEMPLATE
     int temp_fd = mkstemp(temp_filename);
     if (temp_fd == -1) {
-      result->output_json = R"EOF({"error":"failed to create temp file"})EOF";
-      result->exit_code = -2;
+      result->output_json = cloud_soul::Msg::SHELL_JSON_TEMP_FAIL;
+      result->exit_code = cloud_soul::Err::ShellExec::TEMP_FILE_FAIL;
       goal_handle->abort(result);
       active_goals_.erase(goal_handle->get_goal_id());
       return;
@@ -140,8 +141,8 @@ private:
     if (write(temp_fd, script.c_str(), script.size()) != static_cast<ssize_t>(script.size())) {
       close(temp_fd);
       unlink(temp_filename);
-      result->output_json = R"EOF({"error":"failed to write temp script"})EOF";
-      result->exit_code = -3;
+      result->output_json = cloud_soul::Msg::SHELL_JSON_WRITE_FAIL;
+      result->exit_code = cloud_soul::Err::ShellExec::TEMP_WRITE_FAIL;
       goal_handle->abort(result);
       active_goals_.erase(goal_handle->get_goal_id());
       return;
@@ -152,8 +153,8 @@ private:
     int pipefd[2];
     if (pipe(pipefd) != 0) {
       unlink(temp_filename);
-      result->output_json = R"EOF({"error":"pipe creation failed"})EOF";
-      result->exit_code = -4;
+      result->output_json = cloud_soul::Msg::SHELL_JSON_PIPE_FAIL;
+      result->exit_code = cloud_soul::Err::ShellExec::PIPE_FAIL;
       goal_handle->abort(result);
       active_goals_.erase(goal_handle->get_goal_id());
       return;
@@ -163,8 +164,8 @@ private:
     if (pid == -1) {
       close(pipefd[0]); close(pipefd[1]);
       unlink(temp_filename);
-      result->output_json = R"EOF({"error":"fork failed"})EOF";
-      result->exit_code = -5;
+      result->output_json = cloud_soul::Msg::SHELL_JSON_FORK_FAIL;
+      result->exit_code = cloud_soul::Err::ShellExec::FORK_FAIL;
       goal_handle->abort(result);
       active_goals_.erase(goal_handle->get_goal_id());
       return;
@@ -181,7 +182,7 @@ private:
 
     close(pipefd[1]);
     std::stringstream output_ss;
-    char buffer[256];
+    char buffer[cloud_soul::SHELL_OUTPUT_BUF_SIZE];
     int child_exit_code = -1;
     bool canceled = false;
 
@@ -209,7 +210,7 @@ private:
       ssize_t count = read(pipefd[0], buffer, sizeof(buffer));
       if (count > 0) output_ss.write(buffer, count);
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      std::this_thread::sleep_for(cloud_soul::PROCESS_POLL_INTERVAL);
     }
 
     close(pipefd[0]);
@@ -219,10 +220,10 @@ private:
 
     if (canceled) {
       result->output_json = R"({"error":"execution canceled","stdout":")" + escaped_output + R"("})";
-      result->exit_code = -7;
+      result->exit_code = cloud_soul::Err::ShellExec::CANCELED;
     } else {
       result->output_json = "{\"stdout\":\"" + escaped_output + "\",\"exit_code\":" + std::to_string(child_exit_code) + "}";
-      result->exit_code = (child_exit_code == 0) ? 0 : -8;
+      result->exit_code = (child_exit_code == 0) ? cloud_soul::Err::ShellExec::OK : cloud_soul::Err::ShellExec::NONZERO_EXIT;
     }
 
     goal_handle->succeed(result);

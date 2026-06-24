@@ -55,6 +55,8 @@ while(INDEX LESS EXEC_COUNT)
     )
   endif()
 
+  # Add cs_interfaces headers for constants.hpp
+  target_include_directories(${TARGET_NAME} PRIVATE ${cs_interfaces_INCLUDE_DIRS})
   install(TARGETS ${TARGET_NAME}
     DESTINATION lib/${PROJECT_NAME})
 endwhile()
