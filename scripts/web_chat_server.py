@@ -5,6 +5,7 @@ web_chat_server.py - Web 聊天独立服务器
 通过 Flask + rclpy 桥接浏览器与 Agent：
 - 用户浏览器 POST /send → ROS2 服务 /<agent>/input/message_receive/web_chat
 - Agent 回复 → ROS2 话题 /<agent>/output/message_send/web_chat → SSE 推送浏览器
+- POST /upload → 文件上传，保存到 /tmp/web_uploads/
 
 用法:
     python3 web_chat_server.py [--agent <agent_name>] [--port <port>]
@@ -22,6 +23,8 @@ import time
 
 import signal
 import atexit
+import uuid
+from pathlib import Path
 
 from flask import Flask, request, jsonify, Response, make_response
 
@@ -42,6 +45,10 @@ PORT = args.port
 
 app = Flask(__name__)
 message_queue = queue.Queue(maxsize=256)
+
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 * 1024  # 10GB
+UPLOAD_DIR = Path('/tmp/web_uploads')
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ------- HTML (DeepSeek 风格) -------
@@ -135,9 +142,52 @@ def handle_send():
         return jsonify({'success': False, 'error': '缺少 message 字段'}), 400
     if ros_node is None:
         return jsonify({'success': False, 'error': 'ROS2 节点未就绪'}), 503
-    result = ros_node.send_to_agent(data['message'])
+
+    msg = data['message'] or ''
+    files = data.get('files', [])
+    if files:
+        parts = []
+        for f in files:
+            name = f.get('original_name') or f.get('name', 'unknown')
+            size = f.get('size', 0)
+            if size >= 1048576:
+                sz = f'{size/1048576:.1f}MB'
+            elif size >= 1024:
+                sz = f'{size/1024:.1f}KB'
+            else:
+                sz = f'{size}B'
+            parts.append(f'{name} ({sz})')
+        msg = msg + '\n[附件: ' + ', '.join(parts) + ']'
+
+    result = ros_node.send_to_agent(msg)
     return jsonify(result)
 
+
+
+@app.route('/upload', methods=['POST'])
+def handle_upload():
+    if 'files' not in request.files:
+        return jsonify({'success': False, 'error': 'missing files'}), 400
+    files = request.files.getlist('files')
+    if not files or all(f.filename == '' for f in files):
+        return jsonify({'success': False, 'error': 'no files selected'}), 400
+    results = []
+    for f in files:
+        if f.filename == '':
+            continue
+        p = Path(f.filename)
+        stem = p.stem[:80]
+        suffix = p.suffix[:16]
+        uid = uuid.uuid4().hex[:8]
+        safe_name = f"{stem}_{uid}{suffix}".replace('/', '_').replace('\\', '_')
+        save_path = UPLOAD_DIR / safe_name
+        try:
+            f.save(str(save_path))
+            sz = save_path.stat().st_size
+            results.append({'original_name': f.filename, 'saved_name': safe_name, 'path': str(save_path), 'size': sz, 'size_human': format_size(sz)})
+        except Exception as e:
+            results.append({'original_name': f.filename, 'error': str(e)})
+    return jsonify({'success': True, 'files': results})
 
 @app.route('/stream')
 def stream():
@@ -155,6 +205,13 @@ def stream():
                              'X-Accel-Buffering': 'no'})
 
 
+def format_size(size):
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size < 1024:
+            return f"{size:.1f} {unit}" if unit != 'B' else f"{size} B"
+        size /= 1024
+    return f"{size:.1f} TB"
+
 def shutdown():
     rclpy.shutdown()
     # Flask 会自动停止
@@ -167,8 +224,10 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
     atexit.register(shutdown)
 
+    print(f'  文件上传目录: {UPLOAD_DIR}')
     print('═══════════════════════════════════════════')
     print(f'  {AGENT_NAME} Web Chat 服务器已启动')
     print(f'  浏览器打开: http://localhost:{PORT}')
+    print(f'  文件上传目录: {UPLOAD_DIR}')
     print('═══════════════════════════════════════════')
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
