@@ -34,6 +34,60 @@ static json make_error(const std::string& msg) {
 }
 
 // ================================================================
+// JSON repair: defensive fix for common LLM output issues
+// ================================================================
+static std::string repair_json(const std::string& raw) {
+    std::string s = raw;
+    size_t p0 = s.find_first_not_of(" \\t\\n\\r");
+
+
+
+    size_t p1 = s.find_last_not_of(" \\t\\n\\r");
+
+
+
+    if (p0 == std::string::npos) return s;
+    s = s.substr(p0, p1 - p0 + 1);
+    std::string r;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == ',' && i + 1 < s.size())
+            if (s[i+1] == '}' || s[i+1] == ']') continue;
+        r += s[i];
+    }
+    s = r;
+    int brace = 0, brack = 0;
+    bool instr = false, esc = false;
+    for (char c : s) {
+        if (esc) { esc = false; continue; }
+        if (c == '\\') { esc = true; continue; }
+        if (c == '"') { instr = !instr; continue; }
+        if (instr) continue;
+        if (c == '{') brace++;
+        if (c == '}') brace--;
+        if (c == '[') brack++;
+        if (c == ']') brack--;
+    }
+    const char closer[] = {'}',']',0};
+    size_t lc = s.find_last_of(closer);
+    if (lc != std::string::npos) {
+        s = s.substr(0, lc + 1);
+        brace = 0; brack = 0; instr = false; esc = false;
+        for (char c : s) {
+            if (esc) { esc = false; continue; }
+            if (c == '\\') { esc = true; continue; }
+            if (c == '"') { instr = !instr; continue; }
+            if (instr) continue;
+            if (c == '{') brace++;
+            if (c == '}') brace--;
+            if (c == '[') brack++;
+            if (c == ']') brack--;
+        }
+    }
+    while (brack > 0) { s += ']'; brack--; }
+    while (brace > 0) { s += '}'; brace--; }
+    return s;
+}
+
 // Line-based operations (1-indexed, \n delimiter)
 // ================================================================
 static std::vector<std::string> split_lines(const std::string& s) {
@@ -171,17 +225,23 @@ private:
         auto result = std::make_shared<ExecuteTool::Result>();
         const auto goal = gh->get_goal();
 
-        // ---- Parse input JSON with nlohmann ----
+        // ---- Parse input JSON (defensive: auto-repair on failure) ----
         json args;
         try {
             args = json::parse(goal->input_json);
         } catch (const json::parse_error& e) {
-            result->output_json = make_error(
-                "invalid JSON: " + std::string(e.what())).dump();
-            result->exit_code = -1;
-            gh->abort(result);
-            active_.erase(gh->get_goal_id());
-            return;
+            std::string fixed = repair_json(goal->input_json);
+            try {
+                args = json::parse(fixed);
+                RCLCPP_INFO(get_logger(), "JSON auto-repaired");
+            } catch (const json::parse_error& e2) {
+                result->output_json = make_error(
+                    "invalid JSON: " + std::string(e.what())).dump();
+                result->exit_code = -1;
+                gh->abort(result);
+                active_.erase(gh->get_goal_id());
+                return;
+            }
         }
 
         // ---- Timeout ----
