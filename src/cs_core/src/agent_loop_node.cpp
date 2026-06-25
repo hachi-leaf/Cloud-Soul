@@ -17,11 +17,12 @@
 //
 // 修复说明:
 //   - assistant 消息包含 tool_calls 时，content 强制设为 null
-//   - 发送给 API 的消息统一保留删除 reasoning_content
+//   - 发送给 API 的消息统一删除 reasoning_content（已修改：保留推理内容）
 //   - 每次 LLM 调用后立即获取快照，确保模型始终看到最新外部输入
 //   - tool_msg["content"] 使用 result.dump() 存为字符串
 //   - 工具参数 JSON 解析增加 try-catch，防止 LLM 错误参数导致崩溃
 //   - save_context 增加异常保护
+//   - 已开启思考模式并持久化 reasoning_content
 //
 // 参数:
 //   agent_name          - 命名空间前缀
@@ -189,52 +190,6 @@ private:
     return resp->text;
   }
 
-  // UTF-8 清理：将无效字节替换为 U+FFFD
-  static std::string sanitize_utf8(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    size_t i = 0;
-    while (i < s.size()) {
-      unsigned char c = static_cast<unsigned char>(s[i]);
-      size_t len = 0;
-      if ((c & 0x80) == 0) {
-        len = 1;
-      } else if ((c & 0xE0) == 0xC0) {
-        len = 2;
-      } else if ((c & 0xF0) == 0xE0) {
-        len = 3;
-      } else if ((c & 0xF8) == 0xF0) {
-        len = 4;
-      } else {
-        len = 0;
-      }
-      if (len >= 2 && i + len <= s.size()) {
-        bool valid = true;
-        for (size_t j = 1; j < len; ++j) {
-          if ((static_cast<unsigned char>(s[i+j]) & 0xC0) != 0x80) { valid = false; break; }
-        }
-        if (valid) {
-          out.append(s, i, len);
-          i += len;
-          continue;
-        }
-      }
-      out.append("ï¿½"); // U+FFFD
-      i += 1;
-    }
-    return out;
-  }
-
-  static void sanitize_json_utf8(nlohmann::json& j) {
-    if (j.is_string()) {
-      j = sanitize_utf8(j.get<std::string>());
-    } else if (j.is_array()) {
-      for (auto& elem : j) sanitize_json_utf8(elem);
-    } else if (j.is_object()) {
-      for (auto& [k, v] : j.items()) sanitize_json_utf8(v);
-    }
-  }
-
   void save_context() {
     try {
       std::ofstream ofs(context_file_path_);
@@ -250,24 +205,6 @@ private:
       ofs << "\n]";
     } catch (const std::exception& e) {
       RCLCPP_ERROR(get_logger(), "保存上下文时发生异常: %s", e.what());
-      // UTF-8 清理后重试一次
-      try {
-        for (auto& msg : messages_) {
-          sanitize_json_utf8(msg);
-        }
-        std::ofstream ofs2(context_file_path_);
-        if (ofs2) {
-          ofs2 << "[\n";
-          for (size_t i = 0; i < messages_.size(); ++i) {
-            if (i > 0) ofs2 << ",\n";
-            ofs2 << messages_[i].dump();
-          }
-          ofs2 << "\n]";
-          RCLCPP_INFO(get_logger(), "UTF-8 清理后保存成功");
-        }
-      } catch (const std::exception& e2) {
-        RCLCPP_ERROR(get_logger(), "UTF-8 清理后仍失败: %s", e2.what());
-      }
     }
   }
 
@@ -312,45 +249,6 @@ private:
     return out;
   }
 
-  // ---------------------------------------------------------------
-  // JSON 参数修复: LLM 生成的 arguments 可能内嵌未转义的引号
-  // 状态机: 跟踪 JSON 字符串边界, 对字符串内的裸引号进行转义
-  // ---------------------------------------------------------------
-  static std::string repair_json_args(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 16);
-    enum State { DEFAULT, IN_STRING } state = DEFAULT;
-
-    for (size_t i = 0; i < s.size(); ++i) {
-      char c = s[i];
-
-      if (state == DEFAULT) {
-        if (c == '"') state = IN_STRING;
-        out += c;
-      } else { // IN_STRING
-        if (c == '\\' && i+1 < s.size()) {
-          out += c;
-          out += s[++i];  // preserve escape
-        } else if (c == '"') {
-          // look ahead: is this a string terminator?
-          size_t j = i + 1;
-          while (j < s.size()
-                 && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r'))
-            ++j;
-          if (j < s.size()
-              && (s[j] == ',' || s[j] == '}' || s[j] == ']' || s[j] == ':')) {
-            state = DEFAULT;  // real terminator
-            out += c;
-          } else {
-            out += "\\\"";  // content quote, escape it
-          }
-        } else {
-          out += c;
-        }
-      }
-    }
-    return out;
-  }
   static void sanitize_json_recursive(nlohmann::json& j) {
     if (j.is_string()) j = sanitize_json_string(j.get<std::string>());
     else if (j.is_array()) for (auto& e : j) sanitize_json_recursive(e);
@@ -443,13 +341,8 @@ private:
     try {
       args = nlohmann::json::parse(arguments_json);
     } catch (const std::exception& e) {
-      auto repaired = repair_json_args(arguments_json);
-      try {
-        args = nlohmann::json::parse(repaired);
-      } catch (const std::exception& e2) {
-        RCLCPP_WARN(get_logger(), "工具参数解析失败: %s", e2.what());
-        return {{"error", std::string(cloud_soul::Msg::TOOL_PARAM_INVALID) + e2.what()}};
-      }
+      RCLCPP_WARN(get_logger(), "工具参数解析失败: %s", e.what());
+      return {{"error", std::string(cloud_soul::Msg::TOOL_PARAM_INVALID) + e.what()}};
     }
 
     auto goal = ExecuteTool::Goal();
@@ -537,8 +430,8 @@ private:
   void refresh_client(openai_client::OpenAIClient& client) {
     client.clear_messages();
     for (const auto& m : messages_) {
-    // 跳过空对象 {}（save_context 序列化失败时写入的占位符），避免发送 role=null
-    if (m.empty() || !m.contains("role")) continue;
+      // 跳过空对象 {}（save_context 序列化失败时写入的占位符），避免发送 role=null
+      if (m.empty() || !m.contains("role")) continue;
       auto clean = m;
       if (clean.value("role", "") == "assistant") {
         bool has_tc = clean.contains("tool_calls") && !clean["tool_calls"].is_null() &&
@@ -546,7 +439,8 @@ private:
         if (has_tc) {
           clean["content"] = nullptr;
         }
-        // clean.erase("reasoning_content");
+        // 保留 reasoning_content，不再删除
+        // clean.erase("reasoning_content");  // 已注释
       }
       // 确保 tool 消息的 content 是字符串（兼容历史）
       if (clean.value("role", "") == "tool" && clean.contains("content")) {
@@ -554,7 +448,6 @@ private:
           clean["content"] = clean["content"].dump();
         }
       }
-      sanitize_json_utf8(clean);
       client.add_message(clean);
     }
   }
@@ -577,8 +470,9 @@ private:
       assistant_msg["content"] = reply.value("content", "");
     }
 
+    // 保留推理内容（如果存在）
     if (reply.contains("reasoning_content") && !reply["reasoning_content"].is_null()) {
-        assistant_msg["reasoning_content"] = reply["reasoning_content"];
+      assistant_msg["reasoning_content"] = reply["reasoning_content"];
     }
 
     messages_.push_back(assistant_msg);
@@ -688,10 +582,7 @@ private:
     std::string rule = load_rule_text();
     messages_.clear();
     messages_.push_back({{"role", "system"}, {"content", rule + "\n\n[对话摘要]\n" + summary}});
-    for (auto& m : recent) {
-      if (m.value("role", "") == "system") continue;
-      messages_.push_back(std::move(m));
-    }
+    for (auto& m : recent) messages_.push_back(std::move(m));
     messages_.push_back({{"role", "user"}, {"content", cloud_soul::Msg::COMPRESSION_REMINDER}});
 
     context_file_path_ = create_new_context_filename();
@@ -716,6 +607,7 @@ private:
     // ---- 零号思考 ----
     nlohmann::json tools = nlohmann::json::array();
     openai_client::OpenAIClient client(openai_base_url_, openai_api_key_, openai_model_);
+    // 显式开启思考模式
     client.set_thinking_enabled(true);
     refresh_client(client);
     single_step(client, tools);
