@@ -1,119 +1,111 @@
 # Copyright (c) leaf
 # SPDX-License-Identifier: MIT
 
-#!/usr/bin/env python3
 """
-cs_output.launch.py — 启动所有 cs_output 工具节点
-用法: ros2 launch cs_output cs_output.launch.py agent_name:=agent
+Cloud‑Soul 输出子系统 launch 文件
+启动以下节点：
+  - output_mgmt_node    (统一管理节点)
+  - file_rdwt_node       (文件读写工具)
+  - shell_exec_node      (Shell 命令执行工具)
+  - message_send_node    (消息发送工具)
+
+所有节点使用统一的 agent_name 命名空间。
+通过 emulate_tty=True 确保 SIGINT 正确传递给节点，实现优雅退出。
 """
 
+# Copyright (c) leaf
+# SPDX-License-Identifier: MIT
+
 from launch import LaunchDescription
+from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    # ── 共享参数（同包复用） ──
-    agent_name      = LaunchConfiguration('agent_name',       default='agent')
-    info_period     = LaunchConfiguration('info_period',      default='1.0')   # 工具节点心跳周期
-    tool_timeout    = LaunchConfiguration('tool_timeout',     default='60.0')
-    info_timeout    = LaunchConfiguration('info_timeout',     default='3.0')
-    discovery_period= LaunchConfiguration('discovery_period', default='1.0')
-    topic_output    = LaunchConfiguration('topic_output',     default='raw_message')
+    # 公共参数
+    agent_name_arg = DeclareLaunchArgument('agent_name', default_value='agent')
+    info_timeout_arg = DeclareLaunchArgument('info_timeout', default_value='3.0')
+    discovery_period_arg = DeclareLaunchArgument('discovery_period', default_value='1.0')
+    default_timeout_arg = DeclareLaunchArgument('default_timeout', default_value='60.0')
+    cancel_timeout_arg = DeclareLaunchArgument('cancel_timeout', default_value='2.0')
+    info_rate_arg = DeclareLaunchArgument('info_rate', default_value='1.0')
+    topic_output_arg = DeclareLaunchArgument('topic_output', default_value='raw_message')
+
+    agent_name = LaunchConfiguration('agent_name')
+    info_timeout = LaunchConfiguration('info_timeout')
+    discovery_period = LaunchConfiguration('discovery_period')
+    default_timeout = LaunchConfiguration('default_timeout')
+    cancel_timeout = LaunchConfiguration('cancel_timeout')
+    info_rate = LaunchConfiguration('info_rate')
+    topic_output = LaunchConfiguration('topic_output')
+
+    # 节点定义
+    output_mgmt = Node(
+        package='cs_output',
+        executable='output_mgmt_node',
+        name='output_mgmt_node',
+        parameters=[{
+            'agent_name': agent_name,
+            'info_timeout': info_timeout,
+            'discovery_period': discovery_period,
+            'default_timeout': default_timeout,
+            'cancel_timeout': cancel_timeout,
+        }],
+        emulate_tty=True,
+        output='screen',
+    )
+
+    file_rdwt = Node(
+        package='cs_output',
+        executable='file_rdwt_node',
+        name='file_rdwt_node',
+        parameters=[{
+            'agent_name': agent_name,
+            'info_rate': info_rate,
+            'default_timeout': default_timeout,
+        }],
+        emulate_tty=True,
+        output='screen',
+    )
+
+    shell_exec = Node(
+        package='cs_output',
+        executable='shell_exec_node',
+        name='shell_exec_node',
+        parameters=[{
+            'agent_name': agent_name,
+            'info_rate': info_rate,
+            'default_timeout': default_timeout,
+        }],
+        emulate_tty=True,
+        output='screen',
+    )
+
+    message_send = Node(
+        package='cs_output',
+        executable='message_send_node',
+        name='message_send_node',
+        parameters=[{
+            'agent_name': agent_name,
+            'info_rate': info_rate,
+            'topic_output': topic_output,
+            'default_timeout': default_timeout,
+        }],
+        emulate_tty=True,
+        output='screen',
+    )
 
     return LaunchDescription([
-        DeclareLaunchArgument('agent_name',        default_value='agent'),
-        DeclareLaunchArgument('info_period',       default_value='1.0'),
-        DeclareLaunchArgument('tool_timeout',      default_value='60.0'),
-        DeclareLaunchArgument('info_timeout',      default_value='3.0'),
-        DeclareLaunchArgument('discovery_period',  default_value='1.0'),
-        DeclareLaunchArgument('topic_output',      default_value='raw_message'),
-
-        # ── output_mgmt_node（管理器） ──
-        Node(
-            package='cs_output',
-            executable='output_mgmt_node',
-            name='output_mgmt_node',
-            namespace=agent_name,
-            output='both',
-            parameters=[{
-                'agent_name': agent_name,
-                'tool_timeout': tool_timeout,
-                'info_timeout': info_timeout,
-                'discovery_period': discovery_period,
-            }],
-            respawn=True,
-        ),
-
-        # ── shell_exec_node ──
-        Node(
-            package='cs_output',
-            executable='shell_exec_node',
-            name='shell_exec_node',
-            namespace=agent_name,
-            output='both',
-            parameters=[{
-                'agent_name': agent_name,
-                'info_rate': info_period,
-            }],
-            respawn=True,
-        ),
-
-        # ── file_read_node ──
-        Node(
-            package='cs_output',
-            executable='file_read_node',
-            name='file_read_node',
-            namespace=agent_name,
-            output='both',
-            parameters=[{
-                'agent_name': agent_name,
-                'info_rate': info_period,
-            }],
-            respawn=True,
-        ),
-
-        # ── file_write_node ──
-        Node(
-            package='cs_output',
-            executable='file_write_node',
-            name='file_write_node',
-            namespace=agent_name,
-            output='both',
-            parameters=[{
-                'agent_name': agent_name,
-                'info_rate': info_period,
-            }],
-            respawn=True,
-        ),
-
-        # ── message_send_node ──
-        Node(
-            package='cs_output',
-            executable='message_send_node',
-            name='message_send_node',
-            namespace=agent_name,
-            output='both',
-            parameters=[{
-                'agent_name': agent_name,
-                'info_rate': info_period,
-                'topic_output': topic_output,
-            }],
-            respawn=True,
-        ),
-
-        # ── web_search_node ──
-        Node(
-            package='cs_output',
-            executable='web_search_node',
-            name='web_search_node',
-            namespace=agent_name,
-            output='both',
-            parameters=[{
-                'agent_name': agent_name,
-                'info_period': info_period,
-            }],
-            respawn=True,
-        ),
+        agent_name_arg,
+        info_timeout_arg,
+        discovery_period_arg,
+        default_timeout_arg,
+        cancel_timeout_arg,
+        info_rate_arg,
+        topic_output_arg,
+        output_mgmt,
+        file_rdwt,
+        shell_exec,
+        message_send,
     ])

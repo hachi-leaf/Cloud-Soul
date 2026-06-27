@@ -9,6 +9,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <cstring>
+#include <cstdio>
 
 namespace openai_client {
 
@@ -37,8 +38,8 @@ struct OpenAIClient::Impl {
     ReplyCallback reply_cb_;
 
     // ---------- 同步原语 ----------
-    mutable std::mutex data_mutex_;   // 保护参数和消息
-    std::mutex request_mutex_;        // 保证同一时间只有一个网络请求
+    mutable std::mutex data_mutex_;
+    std::mutex request_mutex_;
     std::atomic<bool> cancel_flag_{false};
 
     // ---------- curl 全局初始化 ----------
@@ -48,7 +49,6 @@ struct OpenAIClient::Impl {
     Impl(const std::string& url, const std::string& api_key, const std::string& model)
         : url_(url), api_key_(api_key), model_(model)
     {
-        // 去掉尾部斜杠，后续统一加 "/chat/completions"
         while (!url_.empty() && url_.back() == '/')
             url_.pop_back();
         std::call_once(curl_init_flag_, init_curl);
@@ -187,7 +187,7 @@ void OpenAIClient::cancel_request() {
     impl_->cancel_flag_.store(true, std::memory_order_release);
 }
 
-// ---------- 流式上下文（栈对象） ----------
+// ---------- 流式上下文 ----------
 struct StreamContext {
     std::string* content;
     std::string* reasoning;
@@ -196,18 +196,18 @@ struct StreamContext {
     OpenAIClient::ReplyCallback reply_cb;
     std::atomic<bool>* cancel_flag;
     std::string line_buf;
+    int* out_input_tokens = nullptr;
 };
 
-// ---------- CURL 写回调：处理 SSE ----------
+// ---------- CURL 写回调 ----------
 static size_t stream_write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
     auto* ctx = static_cast<StreamContext*>(userdata);
     if (ctx->cancel_flag->load(std::memory_order_acquire))
-        return 0; // 返回0使 curl 上报写入错误
+        return 0;
 
     size_t total = size * nmemb;
     ctx->line_buf.append(ptr, total);
 
-    // 按行解析
     while (true) {
         auto pos = ctx->line_buf.find('\n');
         if (pos == std::string::npos) break;
@@ -217,12 +217,22 @@ static size_t stream_write_callback(char* ptr, size_t size, size_t nmemb, void* 
             line.pop_back();
         if (line.empty()) continue;
 
-        if (line.rfind("data: ", 0) != 0) continue; // 只关心 data 行
+        if (line.rfind("data: ", 0) != 0) continue;
         std::string data = line.substr(6);
         if (data == "[DONE]") continue;
 
         try {
             auto j = nlohmann::json::parse(data);
+
+            if (j.contains("usage") && j["usage"].is_object()) {
+                if (ctx->out_input_tokens) {
+                    int prompt_tokens = j["usage"].value("prompt_tokens", -1);
+                    if (prompt_tokens >= 0) {
+                        *ctx->out_input_tokens = prompt_tokens;
+                    }
+                }
+            }
+
             if (!j.contains("choices") || !j["choices"].is_array() || j["choices"].empty())
                 continue;
             const auto& choice = j["choices"][0];
@@ -230,34 +240,29 @@ static size_t stream_write_callback(char* ptr, size_t size, size_t nmemb, void* 
                 continue;
             const auto& delta = choice["delta"];
 
-            // 普通文本内容
             if (delta.contains("content") && delta["content"].is_string()) {
                 std::string chunk = delta["content"].get<std::string>();
                 ctx->content->append(chunk);
                 if (ctx->reply_cb) ctx->reply_cb(chunk);
             }
 
-            // 思考内容（DeepSeek 等）
             if (delta.contains("reasoning_content") && delta["reasoning_content"].is_string()) {
                 std::string chunk = delta["reasoning_content"].get<std::string>();
                 ctx->reasoning->append(chunk);
                 if (ctx->think_cb) ctx->think_cb(chunk);
             }
 
-            // 工具调用
             if (delta.contains("tool_calls") && delta["tool_calls"].is_array()) {
                 for (const auto& tc : delta["tool_calls"]) {
                     int idx = tc.value("index", 0);
                     auto it = ctx->tool_calls->find(idx);
                     if (it == ctx->tool_calls->end()) {
-                        // 新建工具调用占位
                         nlohmann::json call;
                         call["id"] = tc.value("id", "");
                         call["type"] = "function";
                         call["function"] = {{"name", ""}, {"arguments", ""}};
                         it = ctx->tool_calls->emplace(idx, std::move(call)).first;
                     }
-                    // 合并字段
                     if (tc.contains("id") && !tc["id"].is_null())
                         it->second["id"] = tc["id"];
                     if (tc.contains("type") && !tc["type"].is_null())
@@ -267,30 +272,31 @@ static size_t stream_write_callback(char* ptr, size_t size, size_t nmemb, void* 
                         if (func.contains("name") && !func["name"].is_null())
                             it->second["function"]["name"] = func["name"];
                         if (func.contains("arguments") && func["arguments"].is_string())
-                            it->second["function"]["arguments"] = 
+                            it->second["function"]["arguments"] =
                                 it->second["function"]["arguments"].get<std::string>() +
                                 func["arguments"].get<std::string>();
                     }
                 }
             }
         } catch (...) {
-            // 忽略解析异常，继续处理后续数据
         }
     }
     return total;
 }
 
-// ---------- CURL 进度回调：允许快速取消 ----------
+// ---------- CURL 进度回调 ----------
 static int progress_callback(void* clientp, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
                              curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
     auto* flag = static_cast<std::atomic<bool>*>(clientp);
-    if (flag->load(std::memory_order_acquire)) return 1; // 返回非0使 curl 中止
+    if (flag->load(std::memory_order_acquire)) return 1;
     return 0;
 }
 
 // ---------- call_api 实现 ----------
-nlohmann::json OpenAIClient::call_api(bool stream, const nlohmann::json& tools) {
-    // 校验 tools 参数
+nlohmann::json OpenAIClient::call_api(bool stream,
+                                     const nlohmann::json& tools,
+                                     int* input_tokens)
+{
     if (!tools.is_null() && !tools.is_array()) {
         throw std::invalid_argument("call_api: tools must be a JSON array or null");
     }
@@ -323,29 +329,33 @@ nlohmann::json OpenAIClient::call_api(bool stream, const nlohmann::json& tools) 
         reply_cb = impl_->reply_cb_;
     }
 
-    // 2. 构建请求体
+    // 2. 构建请求体（仅包含必要字段，适配 DeepSeek 文档）
     nlohmann::json body;
     body["model"] = model;
     body["messages"] = messages;
     body["stream"] = stream;
-    body["temperature"] = temperature;
-    body["top_p"] = top_p;
+    if (temperature != 1.0) body["temperature"] = temperature;
+    if (top_p != 1.0) body["top_p"] = top_p;
     body["max_tokens"] = max_tokens;
-    body["logprobs"] = logprobs;
-    body["response_format"] = {{"type", response_format_type}};
+    // 不发送 logprobs（DeepSeek 文档未列出）
+    if (response_format_type == "json_object") {
+        body["response_format"] = {{"type", "json_object"}};
+    }
     if (!stop.empty()) body["stop"] = stop;
-    if (!tools.is_null()) {
+    if (!tools.is_null() && !tools.empty()) {
         body["tools"] = tools;
         body["tool_choice"] = tool_choice;
     }
     if (thinking_enabled) {
-        body["thinking"] = {{"type", "enabled"}};
-        body["reasoning_effort"] = reasoning_effort;
+        nlohmann::json thinking_obj;
+        thinking_obj["type"] = "enabled";
+        thinking_obj["reasoning_effort"] = reasoning_effort;
+        body["thinking"] = thinking_obj;
     }
 
     std::string body_str = body.dump();
 
-    // 3. 初始化 curl（每次调用创建 easy handle，线程安全）
+    // 3. 初始化 curl
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("Failed to create curl handle");
 
@@ -366,8 +376,11 @@ nlohmann::json OpenAIClient::call_api(bool stream, const nlohmann::json& tools) 
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body_str.size()));
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
+    if (input_tokens) {
+        *input_tokens = -1;
+    }
+
     if (stream) {
-        // 流式配置
         stream_ctx.content = &accumulated_content;
         stream_ctx.reasoning = &accumulated_reasoning;
         stream_ctx.tool_calls = &tool_calls_map;
@@ -375,16 +388,15 @@ nlohmann::json OpenAIClient::call_api(bool stream, const nlohmann::json& tools) 
         stream_ctx.reply_cb = std::move(reply_cb);
         stream_ctx.cancel_flag = &impl_->cancel_flag_;
         stream_ctx.line_buf.clear();
+        stream_ctx.out_input_tokens = input_tokens;
 
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stream_write_callback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &stream_ctx);
 
-        // 进度回调用于及时取消
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_callback);
         curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &impl_->cancel_flag_);
     } else {
-        // 非流式：写入字符串
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](char* data, size_t size, size_t nmemb, void* userp) {
             auto* str = static_cast<std::string*>(userp);
             str->append(data, size * nmemb);
@@ -393,10 +405,9 @@ nlohmann::json OpenAIClient::call_api(bool stream, const nlohmann::json& tools) 
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
     }
 
-    // 4. 执行请求（串行化网络调用）
+    // 4. 执行请求
     {
         std::lock_guard<std::mutex> req_lock(impl_->request_mutex_);
-        // 重置取消标志
         impl_->cancel_flag_.store(false, std::memory_order_release);
 
         CURLcode res = curl_easy_perform(curl);
@@ -404,7 +415,6 @@ nlohmann::json OpenAIClient::call_api(bool stream, const nlohmann::json& tools) 
         curl_easy_cleanup(curl);
 
         if (res != CURLE_OK) {
-            // 检查是否为取消
             bool cancelled = impl_->cancel_flag_.load(std::memory_order_acquire);
             if (stream && cancelled && !accumulated_content.empty()) {
                 goto build_stream_response;
@@ -415,27 +425,44 @@ nlohmann::json OpenAIClient::call_api(bool stream, const nlohmann::json& tools) 
 
     // 5. 处理响应
     if (!stream) {
-        // 非流式：解析 JSON 并提取消息
+        // 调试：打印 API 原始响应
+        fprintf(stderr, "DEBUG API response body: %s\n", response_body.c_str());
+
         auto j = nlohmann::json::parse(response_body);
+
+        // 检查 API 是否返回了错误
+        if (j.contains("error")) {
+            std::string err_msg = j["error"].value("message", "unknown error");
+            std::string err_type = j["error"].value("type", "unknown");
+            throw std::runtime_error("API returned error: [" + err_type + "] " + err_msg);
+        }
+
         if (!j.contains("choices") || !j["choices"].is_array() || j["choices"].empty())
-            throw std::runtime_error("Invalid API response: missing choices");
+            throw std::runtime_error("Invalid API response: missing choices, body: " + response_body.substr(0, 200));
+
+        // 提取输入 token 数
+        if (input_tokens && j.contains("usage") && j["usage"].is_object()) {
+            int prompt_tokens = j["usage"].value("prompt_tokens", -1);
+            if (prompt_tokens >= 0) {
+                *input_tokens = prompt_tokens;
+            }
+        }
+
         return j["choices"][0].value("message", nlohmann::json::object());
     }
 
 build_stream_response:
-    // 流式：构造与非流式一致的消息对象
+    // 流式：构造消息对象
     nlohmann::json msg;
     msg["role"] = "assistant";
     if (!accumulated_reasoning.empty())
         msg["reasoning_content"] = accumulated_reasoning;
 
     if (!tool_calls_map.empty()) {
-        // 工具调用模式
         std::vector<nlohmann::json> tool_calls_array;
         for (const auto& [idx, call] : tool_calls_map)
             tool_calls_array.push_back(call);
         msg["tool_calls"] = tool_calls_array;
-        // 通常不包含 content
     } else {
         msg["content"] = accumulated_content;
     }

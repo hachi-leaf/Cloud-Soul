@@ -14,7 +14,11 @@
 //   // 流式 + 工具调用
 //   nlohmann::json tools = nlohmann::json::parse(R"([{"type":"function",...}])");
 //   nlohmann::json reply2 = client.call_api(true, tools);
+//   // 可选：获取输入 Token 数
+//   int input_tokens = -1;
+//   nlohmann::json reply3 = client.call_api(false, nullptr, &input_tokens);
 //   // 中途失败（取消或网络错误）会返回包含已接收部分内容的 assistant 消息。
+
 #pragma once
 
 #include <nlohmann/json.hpp>
@@ -90,11 +94,14 @@ public:
 
     // ---------- 核心调用 ----------
     /// 使用内部消息列表发起请求
-    /// @param stream 是否流式
-    /// @param tools  工具定义数组 (JSON 数组)，传 nullptr 表示不用工具
+    /// @param stream       是否流式
+    /// @param tools        工具定义数组 (JSON 数组)，传 nullptr 表示不用工具
+    /// @param input_tokens 可选输出：如果非空，将被设置为 API 返回的输入 token 数（prompt_tokens），
+    ///                     若无法获取则为 -1
     /// @return 助手消息对象，格式与非流式一致。流式中途失败/取消时返回已收到的部分内容
     nlohmann::json call_api(bool stream = false,
-                            const nlohmann::json& tools = nullptr);
+                            const nlohmann::json& tools = nullptr,
+                            int* input_tokens = nullptr);
 
     /// 取消正在进行的流式请求（非流式调用无法中途取消）
     void cancel_request();

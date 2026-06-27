@@ -19,10 +19,11 @@ find_package(nlohmann_json REQUIRED)
 set(EXECUTABLE_LIST
   output_mgmt_node    src/output_mgmt_node.cpp
   shell_exec_node     src/shell_exec_node.cpp
-  file_read_node      src/file_read_node.cpp
-  file_write_node     src/file_write_node.cpp
+  # file_read_node      src/file_read_node.cpp
+  # file_write_node     src/file_write_node.cpp
+  file_rdwt_node      src/file_rdwt_node.cpp
   message_send_node   src/message_send_node.cpp
-  web_search_node     src/web_search_node.cpp
+  # web_search_node     src/web_search_node.cpp
 )
 
 # 批量创建可执行文件
