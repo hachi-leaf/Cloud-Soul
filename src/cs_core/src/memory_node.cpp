@@ -67,12 +67,10 @@ public:
     ~MemoryNode() { git_libgit2_shutdown(); }
 
 private:
-    // ---------- 参数辅助 ----------
     std::string get_param(const std::string& name) {
         return this->get_parameter(name).as_string();
     }
 
-    // ---------- recall ----------
     void on_recall(const std::shared_ptr<MemoryRecall::Request>,
                    std::shared_ptr<MemoryRecall::Response> res) {
         if (!ensure_repo()) { res->error_code = -1; res->text = "repo sync failed"; return; }
@@ -84,7 +82,6 @@ private:
         res->text = expand_includes(content, repo_dir_);
     }
 
-    // ---------- archive ----------
     void on_archive(const std::shared_ptr<MemoryArchive::Request> req,
                     std::shared_ptr<MemoryArchive::Response> res) {
         std::string src = req->json_path;
@@ -108,7 +105,7 @@ private:
             openai_client_->clear_messages();
             openai_client_->add_message({{"role","system"}, {"content",sys}});
             openai_client_->add_message({{"role","user"}, {"content",json_str}});
-            json ai = openai_client_->call_api(false, nullptr);   // may throw
+            json ai = openai_client_->call_api(false, nullptr);
             if (!ai.contains("content") || !ai["content"].is_string()) {
                 revert(pro, src); res->error_code = -1; return;
             }
@@ -129,10 +126,9 @@ private:
 
             if (!commit_file(diary_path)) { revert(pro, src); res->error_code = -1; return; }
 
-            // 推送，带中断检测
             bool pushed = false;
             for (int i = 0; (push_retry_ < 0 || i < push_retry_); ++i) {
-                if (!rclcpp::ok()) break;   // SIGINT 中断立即退出
+                if (!rclcpp::ok()) break;
                 if (git_push()) { pushed = true; break; }
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             }
@@ -142,14 +138,21 @@ private:
                 revert(pro, src);
                 res->error_code = -1; return;
             }
+            // 关键：将压缩概要传回 agent_loop_node
+            res->message = summary;
             res->error_code = 0;
+            RCLCPP_INFO(get_logger(), "压缩概要生成成功，长度: %zu", summary.size());
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(get_logger(), "on_archive 异常: %s", e.what());
+            revert(pro, src);
+            res->error_code = -1;
         } catch (...) {
+            RCLCPP_ERROR(get_logger(), "on_archive 未知异常");
             revert(pro, src);
             res->error_code = -1;
         }
     }
 
-    // ---------- 仓库同步 ----------
     bool ensure_repo() {
         for (int i = 0; pull_retry_ < 0 || i < pull_retry_; ++i) {
             if (!rclcpp::ok()) return false;
@@ -168,6 +171,7 @@ private:
                 }
             } else {
                 if (git_fetch_and_reset() == 0) return true;
+                else RCLCPP_ERROR(get_logger(), "git_fetch_and_reset 失败");
             }
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
@@ -186,6 +190,7 @@ private:
         git_fetch_options opts = GIT_FETCH_OPTIONS_INIT;
         opts.callbacks.credentials = cred_cb;
         if (git_remote_fetch(remote, nullptr, &opts, nullptr)) {
+            RCLCPP_ERROR(get_logger(), "git_remote_fetch 失败");
             git_remote_free(remote); git_repository_free(repo); return -1;
         }
         git_remote_free(remote);
@@ -208,7 +213,6 @@ private:
         return 0;
     }
 
-    // ---------- 提交 ----------
     bool commit_file(const std::string& file_path) {
         git_repository* repo;
         if (git_repository_open(&repo, repo_dir_.c_str())) return false;
@@ -246,7 +250,6 @@ private:
         return ok;
     }
 
-    // ---------- 推送 ----------
     bool git_push() {
         git_repository* repo;
         if (git_repository_open(&repo, repo_dir_.c_str())) return false;
@@ -269,12 +272,14 @@ private:
         return err == 0;
     }
 
-    // ---------- SSH 凭证 ----------
+    // ---------- 直接读取私钥，不依赖 ssh-agent ----------
     static int cred_cb(git_cred** cred, const char*, const char* user, unsigned int, void*) {
-        return git_cred_ssh_key_from_agent(cred, user ? user : "git");
+        const char* username = user ? user : "git";
+        const char* private_key_path = "/home/leaf-jammy/.ssh/id_ed25519";
+        const char* public_key_path  = "/home/leaf-jammy/.ssh/id_ed25519.pub";
+        return git_cred_ssh_key_new(cred, username, public_key_path, private_key_path, "");
     }
 
-    // ---------- 文件工具 ----------
     static bool read_file(const std::string& path, std::string& out) {
         std::ifstream f(path);
         if (!f) return false;
@@ -296,13 +301,11 @@ private:
         }
     }
 
-    // ---------- 占位符展开（防循环、防爆栈） ----------
     static std::string expand_includes(const std::string& text,
                                        const std::string& base_dir) {
         std::regex re(R"(\[([^\]]+)\])");
         std::string result;
         size_t last = 0;
-        // 循环检测：记录当前正在展开的绝对路径栈
         static thread_local std::unordered_set<std::string> expanding;
         static const int MAX_DEPTH = 10;
 
@@ -312,16 +315,14 @@ private:
             std::string path = (*it)[1].str();
             std::string full = base_dir + "/" + path;
 
-            // 防止递归过深
             if (expanding.size() >= MAX_DEPTH) {
                 result += it->str();
                 last = it->position() + it->length();
                 continue;
             }
 
-            // 循环引用检测
             if (expanding.count(full)) {
-                result += it->str();   // 保留原文，不展开
+                result += it->str();
                 last = it->position() + it->length();
                 continue;
             }
