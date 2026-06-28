@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 400" width="500" height="400">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer ring: cloud / unity -->
+  <circle cx="225" cy="165" r="55" fill="none" stroke="url(#g)" stroke-width="3"/>
+
+  <!-- Inner geometric spark - larger, breaks through circle -->
+  <g transform="translate(225, 165)">
+    <!-- White backing to cut through circle line -->
+    <line x1="0" y1="-58" x2="18" y2="0" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+    <line x1="18" y1="0" x2="0" y2="58" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+    <line x1="0" y1="58" x2="-18" y2="0" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+    <line x1="-18" y1="0" x2="0" y2="-58" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+
+    <!-- Diamond -->
+    <line x1="0" y1="-58" x2="18" y2="0" stroke="url(#g)" stroke-width="3" stroke-linecap="round"/>
+    <line x1="18" y1="0" x2="0" y2="58" stroke="url(#g)" stroke-width="3" stroke-linecap="round"/>
+    <line x1="0" y1="58" x2="-18" y2="0" stroke="url(#g)" stroke-width="3" stroke-linecap="round"/>
+    <line x1="-18" y1="0" x2="0" y2="-58" stroke="url(#g)" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- Cross -->
+    <line x1="-18" y1="0" x2="18" y2="0" stroke="url(#g)" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="0" y1="-58" x2="0" y2="58" stroke="url(#g)" stroke-width="1.5" stroke-linecap="round"/>
+
+    <!-- Center dot -->
+    <circle cx="0" cy="0" r="4" fill="url(#g)"/>
+  </g>
+
+  <!-- Text -->
+  <text x="225" y="285" text-anchor="middle" font-family="'Helvetica Neue','Segoe UI',Arial,sans-serif" font-size="34" font-weight="300" letter-spacing="12" fill="#1e3a5f">CLOUD SOUL</text>
+  <text x="225" y="310" text-anchor="middle" font-family="'Helvetica Neue','Segoe UI',Arial,sans-serif" font-size="11" font-weight="300" letter-spacing="6" fill="#8ba0b8">AI AGENT RUNTIME</text>
+
+  <line x1="140" y1="326" x2="310" y2="326" stroke="#d0dce8" stroke-width="0.5"/>
+</svg>
