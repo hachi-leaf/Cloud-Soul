@@ -1,7 +1,7 @@
 // Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 
-// Cloud-Soul Agent 主循环节点 - 完整修复版
+// Cloud-Soul Agent 主循环节点 - 三重循环稳定版
 // Node: /<agent_name>/agent_loop_node
 
 #include <dirent.h>
@@ -93,16 +93,17 @@ public:
                     break;
                 }
 
-                save_current_json();
-                if (!rclcpp::ok()) {
-                    RCLCPP_INFO(get_logger(), "收到退出信号，退出小循环");
-                    break;
-                }
-
+                // 小循环内部的 token 检查可能已触发退出，这里作为兜底
                 if (current_input_tokens_ > max_context_tokens_) {
                     RCLCPP_INFO(get_logger(), "输入 token 超限 (%d > %d), 准备压缩",
                                 current_input_tokens_, max_context_tokens_);
                     token_limit_reached = true;
+                    break;
+                }
+
+                save_current_json();
+                if (!rclcpp::ok()) {
+                    RCLCPP_INFO(get_logger(), "收到退出信号，退出小循环");
                     break;
                 }
             }
@@ -163,6 +164,18 @@ public:
                 msg_history_ = new_msgs;
                 create_new_json_file();
                 save_current_json();
+
+                // 压缩后立即调用一次 LLM，更新 token 计数
+                json tools = fetch_current_tools();
+                int input_tokens = -1;
+                json reply = call_llm_raw(tools, &input_tokens);
+                current_input_tokens_ = input_tokens;
+                if (!reply.is_null()) {
+                    msg_history_.push_back(reply);
+                    save_current_json();
+                }
+                RCLCPP_INFO(get_logger(), "压缩后 token 更新: %d", current_input_tokens_);
+
                 RCLCPP_INFO(get_logger(), "压缩完成，新消息数: %zu", msg_history_.size());
                 continue;
             } else {
@@ -310,14 +323,12 @@ private:
         json& last_msg = msg_history_.back();
         std::string role = last_msg.value("role", "");
 
-        bool has_tool_calls = last_msg.contains("tool_calls") && last_msg["tool_calls"].is_array() && !last_msg["tool_calls"].empty();
-
         if (role == "system") {
             RCLCPP_FATAL(get_logger(), "末尾是 system 消息，验证错误！");
             return false;
         }
 
-        // === 预处理 DSML 格式 ===
+        // 预处理 DSML 格式
         if (role == "assistant") {
             std::string content = last_msg.value("content", "");
             if (content.find("<|DSML|tool_calls>") != std::string::npos) {
@@ -326,25 +337,143 @@ private:
                 if (!dsml_tools.empty()) {
                     last_msg["content"] = "";
                     last_msg["tool_calls"] = dsml_tools;
-                    has_tool_calls = true;
                 }
             }
         }
 
-        // 2.A: 如果有 tool_calls，必须进入工具调用循环
+        // 检查是否有 tool_calls
+        bool has_tool_calls = (role == "assistant") &&
+                              last_msg.contains("tool_calls") &&
+                              last_msg["tool_calls"].is_array() &&
+                              !last_msg["tool_calls"].empty();
+
         if (has_tool_calls) {
             RCLCPP_INFO(get_logger(), "✅ 进入工具调用循环...");
             return process_tool_calls_loop();
         }
 
-        // 2.D: 孤立 tool 消息
+        // 孤立 tool 消息，追加快照
         if (role == "tool") {
             RCLCPP_WARN(get_logger(), "末尾出现孤立 tool 消息，追加 input 快照");
             return append_input_snapshot();
         }
 
-        // 2.B: 调用 LLM
+        // 调用 LLM
         return call_llm_and_handle_reply();
+    }
+
+    // ---------- 工具调用循环 ----------
+    bool process_tool_calls_loop() {
+        while (rclcpp::ok()) {
+            json& last_msg = msg_history_.back();
+            if (last_msg.value("role", "") != "assistant" ||
+                !last_msg.contains("tool_calls") ||
+                last_msg["tool_calls"].empty()) {
+                break;
+            }
+
+            auto tool_calls = last_msg["tool_calls"];
+            std::vector<json> tool_results;
+            for (const auto& tc : tool_calls) {
+                json tr = execute_single_tool(tc);
+                if (!tr.is_null()) tool_results.push_back(tr);
+            }
+            if (tool_results.empty()) {
+                tool_results.push_back({
+                    {"role", "tool"},
+                    {"tool_call_id", "none"},
+                    {"content", "[无工具执行结果]"}
+                });
+            }
+            RCLCPP_INFO(get_logger(), "工具调用循环：追加 %zu 条 tool 消息", tool_results.size());
+            for (auto& tr : tool_results) {
+                msg_history_.push_back(tr);
+            }
+            save_current_json();
+
+            // 工具执行后检查 token
+            if (current_input_tokens_ > max_context_tokens_) {
+                RCLCPP_WARN(get_logger(), "工具执行后 token 超限 (%d > %d)，退出工具循环",
+                            current_input_tokens_, max_context_tokens_);
+                return false;
+            }
+
+            // 追加快照
+            append_input_snapshot();
+
+            // 再次调用 LLM
+            json tools = fetch_current_tools();
+            int input_tokens = -1;
+            json reply = call_llm_raw(tools, &input_tokens);
+            current_input_tokens_ = input_tokens;
+
+            if (reply.is_null()) {
+                RCLCPP_ERROR(get_logger(), "工具调用循环中 LLM 调用失败，退出循环");
+                return false;
+            }
+
+            msg_history_.push_back(reply);
+            save_current_json();
+
+            // LLM 回复后检查 token
+            if (current_input_tokens_ > max_context_tokens_) {
+                RCLCPP_WARN(get_logger(), "LLM 回复后 token 超限 (%d > %d)，退出工具循环",
+                            current_input_tokens_, max_context_tokens_);
+                return false;
+            }
+
+            // 如果 LLM 没有继续要求工具调用，则退出循环
+            if (!reply.contains("tool_calls") || reply["tool_calls"].empty()) {
+                RCLCPP_INFO(get_logger(), "工具调用循环结束，模型已无工具调用");
+                break;
+            }
+        }
+
+        // 循环结束后，如果最后一条是纯文本，追加警告
+        json& final_msg = msg_history_.back();
+        if (!final_msg.contains("tool_calls") || final_msg["tool_calls"].empty()) {
+            msg_history_.push_back({{"role", "user"},
+                {"content", "本 Agent 架构禁止直接 Reply，请选择合适的消息渠道工具通知用户或 sleep 10 静默"}});
+            save_current_json();
+        }
+
+        return append_input_snapshot();
+    }
+
+    // ---------- 非工具调用 LLM ----------
+    bool call_llm_and_handle_reply() {
+        json tools = fetch_current_tools();
+        int input_tokens = -1;
+        json reply = call_llm_raw(tools, &input_tokens);
+        current_input_tokens_ = input_tokens;
+
+        if (reply.is_null()) {
+            RCLCPP_ERROR(get_logger(), "LLM 调用异常（非工具路径）");
+            msg_history_.push_back({{"role", "assistant"}, {"content", "[System: LLM 调用失败，将在下一轮重试]"}});
+            save_current_json();
+            return append_input_snapshot();
+        }
+
+        msg_history_.push_back(reply);
+        save_current_json();
+
+        // LLM 回复后检查 token
+        if (current_input_tokens_ > max_context_tokens_) {
+            RCLCPP_WARN(get_logger(), "LLM 回复后 token 超限 (%d > %d)，退出触发压缩",
+                        current_input_tokens_, max_context_tokens_);
+            return false;
+        }
+
+        bool has_tool_calls = reply.contains("tool_calls") &&
+                              reply["tool_calls"].is_array() &&
+                              !reply["tool_calls"].empty();
+        if (!has_tool_calls) {
+            msg_history_.push_back({{"role", "user"},
+                {"content", "本 Agent 架构禁止直接 Reply，请选择合适的消息渠道工具通知用户或 sleep 10 静默"}});
+            save_current_json();
+        }
+
+        return append_input_snapshot();
     }
 
     // ---------- DSML 格式解析器 ----------
@@ -375,77 +504,7 @@ private:
         return tool_calls_array;
     }
 
-    // ---------- 工具调用循环（每轮 tool 后立即追加快照）----------
-    bool process_tool_calls_loop() {
-        while (rclcpp::ok()) {
-            json& last_msg = msg_history_.back();
-            if (last_msg.value("role", "") != "assistant" ||
-                !last_msg.contains("tool_calls") ||
-                last_msg["tool_calls"].empty()) {
-                break;
-            }
-
-            auto tool_calls = last_msg["tool_calls"];
-            std::vector<json> tool_results;
-            for (const auto& tc : tool_calls) {
-                json tr = execute_single_tool(tc);
-                if (!tr.is_null()) {
-                    tool_results.push_back(tr);
-                }
-            }
-            if (tool_results.empty()) {
-                tool_results.push_back({
-                    {"role", "tool"},
-                    {"tool_call_id", "none"},
-                    {"content", "[无工具执行结果]"}
-                });
-            }
-            RCLCPP_INFO(get_logger(), "工具调用循环：追加 %zu 条 tool 消息", tool_results.size());
-            for (auto& tr : tool_results) {
-                msg_history_.push_back(tr);
-            }
-            save_current_json();
-
-            // 【关键】每次 toolsback 后，立即推送 input 快照
-            if (!append_input_snapshot()) {
-                RCLCPP_ERROR(get_logger(), "追加快照失败，退出工具循环");
-                return false;
-            }
-
-            // 再次调用 LLM
-            json tools = fetch_current_tools();
-            int input_tokens = -1;
-            json reply = call_llm_raw(tools, &input_tokens);
-            current_input_tokens_ = input_tokens;
-
-            if (reply.is_null()) {
-                RCLCPP_ERROR(get_logger(), "工具调用循环中 LLM 调用失败，退出循环");
-                return false;
-            }
-
-            msg_history_.push_back(reply);
-            save_current_json();
-
-            // 如果 LLM 仍有 tool_calls，继续循环；否则结束
-            if (!reply.contains("tool_calls") || reply["tool_calls"].empty()) {
-                RCLCPP_INFO(get_logger(), "工具调用循环结束，模型已无工具调用");
-                break;
-            }
-        }
-
-        // 最终若模型给出纯文本回复，追加警告
-        json& final_msg = msg_history_.back();
-        if (final_msg.contains("tool_calls") && !final_msg["tool_calls"].empty()) {
-            // 理论上不会走到这里，但作为保护，不再追加快照，直接返回
-            return true;
-        }
-        msg_history_.push_back({{"role", "user"},
-            {"content", "本 Agent 架构禁止直接 Reply，请选择合适的消息渠道工具通知用户或 sleep 10 静默"}});
-        save_current_json();
-        return append_input_snapshot();
-    }
-
-    // ---------- 执行单个工具（通用提取 exit_code 和关键字段）----------
+    // ---------- 执行单个工具 ----------
     json execute_single_tool(const json& tc) {
         if (!tc.contains("function")) return {};
         auto func = tc["function"];
@@ -586,45 +645,13 @@ private:
             reply = openai_client_->call_api(false, tools, out_input_tokens);
         } catch (const std::exception& e) {
             RCLCPP_ERROR(get_logger(), "LLM 调用异常: %s", e.what());
+            if (out_input_tokens) *out_input_tokens = -1;
             return {};
         }
         if (reply.is_null() || !reply.contains("role")) {
             return {};
         }
         return reply;
-    }
-
-    // ---------- 非工具调用情况下的 LLM 调用 ----------
-    bool call_llm_and_handle_reply() {
-        json tools = fetch_current_tools();
-        int input_tokens = -1;
-        json reply = call_llm_raw(tools, &input_tokens);
-        current_input_tokens_ = input_tokens;
-
-        if (reply.is_null()) {
-            RCLCPP_ERROR(get_logger(), "LLM 调用异常（非工具路径）");
-            msg_history_.push_back({{"role", "assistant"}, {"content", "[System: LLM 调用失败，将在下一轮重试]"}});
-            save_current_json();
-            return append_input_snapshot();
-        }
-
-        msg_history_.push_back(reply);
-        save_current_json();
-
-        bool has_tool_calls = reply.contains("tool_calls") &&
-                              reply["tool_calls"].is_array() &&
-                              !reply["tool_calls"].empty();
-
-        if (has_tool_calls) {
-            RCLCPP_INFO(get_logger(), "LLM 返回了工具调用，立即返回小循环处理");
-            return small_loop_once();
-        }
-
-        RCLCPP_WARN(get_logger(), "模型直接回复，追加警告并立即重试");
-        msg_history_.push_back({{"role", "user"},
-            {"content", "本 Agent 架构禁止直接 Reply，请选择合适的消息渠道工具通知用户或 sleep 10 静默"}});
-        save_current_json();
-        return small_loop_once();
     }
 
     // ---------- 追加快照 ----------
