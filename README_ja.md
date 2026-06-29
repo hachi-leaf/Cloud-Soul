@@ -67,7 +67,7 @@
   │   cs_core    │◄───│          cs_output               │
   │              │    │                                  │
   │ agent_loop   │    │  shell_exec   file_rdwt          │
-  │ memory_node  │    │  message_send web_search         │
+  │ memory_node  │    │  message_send                   │
   │ call_openai  │    │  output_mgmt (自動検出)           │
   └──────┬───────┘    └──────────────────────────────────┘
          │
@@ -147,7 +147,7 @@ cd Cloud-Soul && colcon build --symlink-install
 |------|-----|
 | 最新 | `v0.3.3-Beta` |
 | パッケージ | 4 (`cs_core` `cs_input` `cs_output` `cs_interfaces`) |
-| ツール | 3 (`shell_exec` `file_rdwt` `message_send` `web_search` `web_chat`) |
+| ツール | 3 (`shell_exec` `file_rdwt` `message_send`) |
 | センサー | 3 (`system_status` `message_receive` `ros_msg`) |
 | ノード | 10+ |
 

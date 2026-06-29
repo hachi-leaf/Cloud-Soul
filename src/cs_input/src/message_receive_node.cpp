@@ -9,20 +9,22 @@
 // 作用:
 //   提供 ROS 2 服务作为消息输入渠道，接收用户文本消息，
 //   自动添加 [UTC时间+渠道] 前缀后发布到 data 话题。
-//   支持两个固定渠道：可配置的 ros_channel 和固定的 web_chat。
+//   支持两个渠道：可配置的 ros_channel 和 web_chat_channel。
 //   info 话题定期发布描述文本与心跳。
 //
 // 参数:
-//   <string>agent_name   - Agent 命名空间，默认 "agent"
-//   <string>ros_channel   - ROS 消息渠道服务名后缀，默认 "ros2_msg"
-//                            必须为非空且仅包含字母、数字、下划线（遵守 ROS 2 名称规范），
-//                            否则节点启动失败并退出。
-//   <float64>info_rate     - info 话题发布频率（Hz），默认 1.0
-//                            ≤0 时使用默认 1.0 并发出警告。
+//   <string>agent_name         - Agent 命名空间，默认 "agent"
+//   <string>ros_channel         - ROS 消息渠道服务名后缀，默认 "ros2_msg"
+//                                  必须为非空且仅包含字母、数字、下划线（遵守 ROS 2 名称规范），
+//                                  否则节点启动失败并退出。
+//   <string>web_chat_channel    - Web 聊天渠道服务名后缀，默认 "web_chat"
+//                                  校验规则同 ros_channel。
+//   <float64>info_rate           - info 话题发布频率（Hz），默认 1.0
+//                                  ≤0 时使用默认 1.0 并发出警告。
 //
 // 对外接口（遵循 input 模块规范）：
 //   话题 /<agent_name>/input/message_receive/info  (std_msgs/String, JSON)
-//     内容: {"desc":"<ros_channel> / web_chat 消息接收","mode":"accumulate"}
+//     内容: {"desc":"<ros_channel> / <web_chat_channel> 消息接收","mode":"accumulate"}
 //     QoS: transient_local + reliable
 //
 //   话题 /<agent_name>/input/message_receive       (std_msgs/String, 纯文本)
@@ -32,14 +34,14 @@
 //       请求: string message
 //       响应: bool success=true, string message="消息已发送"
 //
-//   服务 /<agent_name>/input/message_receive/web_chat (cs_interfaces::SendMessage)
+//   服务 /<agent_name>/input/message_receive/<web_chat_channel> (cs_interfaces::SendMessage)
 //       请求/响应同上
 //
 // 行为特性:
 //   1. 服务调用立即处理，无队列，并发安全（单线程）。
 //   2. 消息正文可为空或含任何字符，直接拼接前缀。
 //   3. 时间戳使用 UTC，格式固定。
-//   4. ros_channel 参数严格校验：非空且仅允许字母、数字、下划线；
+//   4. ros_channel / web_chat_channel 参数严格校验：非空且仅允许字母、数字、下划线；
 //      非法时节点启动失败并退出，不创建任何服务或话题。
 //   5. info_rate ≤ 0 时使用默认 1.0 Hz 并发出警告。
 //   6. info 话题定期发布（频率由 info_rate 决定），节点启动立即发布一次。
@@ -68,6 +70,7 @@ public:
         this->declare_parameter<std::string>("agent_name", agent_name);
         this->declare_parameter<double>("info_rate", 1.0);
         this->declare_parameter<std::string>("ros_channel", "ros2_msg");
+        this->declare_parameter<std::string>("web_chat_channel", "web_chat");
 
         double info_rate = this->get_parameter("info_rate").as_double();
         if (info_rate <= 0.0) {
@@ -75,21 +78,26 @@ public:
             info_rate = 1.0;
         }
 
-        channel_name_ = this->get_parameter("ros_channel").as_string();
+        ros_channel_ = this->get_parameter("ros_channel").as_string();
+        web_chat_channel_ = this->get_parameter("web_chat_channel").as_string();
 
         // ---- 校验 ros_channel 合法性 (ROS 2 名称规则：字母、数字、下划线) ----
-        if (channel_name_.empty()) {
-            RCLCPP_ERROR(this->get_logger(), "ros_channel cannot be empty");
-            throw std::runtime_error("ros_channel is empty");
-        }
-        for (char c : channel_name_) {
-            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') {
-                RCLCPP_ERROR(this->get_logger(),
-                             "ros_channel contains invalid character: '%c'", c);
-                throw std::runtime_error(
-                    "ros_channel contains invalid character: " + std::string(1, c));
+        auto validate_channel = [this](const std::string & name, const std::string & param_name) {
+            if (name.empty()) {
+                RCLCPP_ERROR(this->get_logger(), "%s cannot be empty", param_name.c_str());
+                throw std::runtime_error(param_name + " is empty");
             }
-        }
+            for (char c : name) {
+                if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') {
+                    RCLCPP_ERROR(this->get_logger(),
+                                 "%s contains invalid character: '%c'", param_name.c_str(), c);
+                    throw std::runtime_error(
+                        param_name + " contains invalid character: " + std::string(1, c));
+                }
+            }
+        };
+        validate_channel(ros_channel_, "ros_channel");
+        validate_channel(web_chat_channel_, "web_chat_channel");
 
         std::string ns = "/" + agent_name_;
 
@@ -106,12 +114,12 @@ public:
 
         // ---- 服务 ----
         ros2_msg_srv_ = this->create_service<SendMessage>(
-            ns + "/input/message_receive/" + channel_name_,
+            ns + "/input/message_receive/" + ros_channel_,
             std::bind(&MessageReceiveNode::handle_ros2_msg, this,
                       std::placeholders::_1, std::placeholders::_2));
 
         web_chat_srv_ = this->create_service<SendMessage>(
-            ns + "/input/message_receive/web_chat",
+            ns + "/input/message_receive/" + web_chat_channel_,
             std::bind(&MessageReceiveNode::handle_web_chat, this,
                       std::placeholders::_1, std::placeholders::_2));
 
@@ -123,14 +131,14 @@ public:
         // 立即发布一次 info
         publish_info();
         RCLCPP_INFO(this->get_logger(),
-                    "MessageReceiveNode ready, channels: %s, web_chat",
-                    channel_name_.c_str());
+                    "MessageReceiveNode ready, channels: %s, %s",
+                    ros_channel_.c_str(), web_chat_channel_.c_str());
     }
 
 private:
     void publish_info() {
         json info;
-        info["desc"] = channel_name_ + " / web_chat 消息接收";
+        info["desc"] = ros_channel_ + " / " + web_chat_channel_ + " 消息接收";
         info["mode"] = "accumulate";
         auto msg = std_msgs::msg::String();
         try {
@@ -144,13 +152,13 @@ private:
     void handle_ros2_msg(
         const std::shared_ptr<SendMessage::Request> req,
         std::shared_ptr<SendMessage::Response> res) {
-        handle_message(req, res, channel_name_);
+        handle_message(req, res, ros_channel_);
     }
 
     void handle_web_chat(
         const std::shared_ptr<SendMessage::Request> req,
         std::shared_ptr<SendMessage::Response> res) {
-        handle_message(req, res, "web_chat");
+        handle_message(req, res, web_chat_channel_);
     }
 
     void handle_message(
@@ -184,7 +192,8 @@ private:
     }
 
     std::string agent_name_;
-    std::string channel_name_;
+    std::string ros_channel_;
+    std::string web_chat_channel_;
 
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr info_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr data_pub_;

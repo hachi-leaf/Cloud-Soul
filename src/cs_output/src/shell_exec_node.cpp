@@ -8,7 +8,7 @@
 // Param:
 //  <string>agent_name       --> Agent 名
 //  <float64>info_rate       --> 发布 Tools Info 的频率（Hz）
-//  <float64>default_timeout --> 默认状态下（Agent 将 Action 的 Goal 的 timeout_sec 设为 0 时）Action 的 timeout
+//  <float64>default_timeout --> 命令执行超时（秒），当 LLM 未传 timeout_sec 时使用，默认 30.0
 
 // Topic: /<agent_name>/output/shell_exec/info
 // Struct:
@@ -17,7 +17,6 @@
 // Action: /<agent_name>/output/shell_exec
 // Struct:
 //  Goal <string>input_json      --> LLM 输出的 tools_call json 字段，由 SHELL_EXEC_INFO_JSON 约束
-//  Goal <float64>timeout_sec    --> Action 调用超时时间（秒），0 表示使用 default_timeout
 //  ---
 //  Results <string>output_json  --> 返回给 LLM tools_callback 字段，为自由字符串
 //  Results <int32>exit_code     --> 错误码，0 为成功，-1 为错误
@@ -30,7 +29,7 @@
 //  3. 系统错误（临时文件创建/写入、管道/fork 失败）→ exit_code = -1, output_json = {"error":"..."}，具体错误描述见代码
 //  4. 命令执行成功（退出码为 0）→ exit_code = 0, output_json = {"stdout":"...","exit_code":0}
 //  5. 命令执行失败（退出码非 0）→ exit_code = -1, output_json = {"stdout":"...","exit_code":<实际退出码>}
-//  6. 命令执行超时（依据 timeout_sec 或 default_timeout 计算截止时间）→ exit_code = -1, output_json = {"error":"timed out after Xs","stdout":"<已捕获>"}
+//  6. 命令执行超时（从 input_json.arguments.timeout_sec 读取，未传则用 default_timeout）→ exit_code = -1, output_json = {"error":"timed out after Xs","stdout":"<已捕获>"}
 //  7. 用户主动 Cancel（包括 Ctrl+C 终止节点）→ exit_code = -1, output_json = {"error":"execution canceled","stdout":"<已捕获>"}
 //  8. 子进程 stdin 关闭（重定向到 /dev/null），防止交互式命令卡死；Agent 应将交互式命令转为非交互式写法（如 apt install -y，echo password | sudo -S）
 //  9. 支持多行命令，通过 /bin/sh 执行临时脚本
@@ -148,7 +147,7 @@ public:
   {
     this->declare_parameter<std::string>("agent_name", agent_name);
     this->declare_parameter<double>("info_rate", 1.0);
-    this->declare_parameter<double>("default_timeout", 60.0);
+    this->declare_parameter<double>("default_timeout", 30.0);
 
     double info_rate = this->get_parameter("info_rate").as_double();
     default_timeout_ = this->get_parameter("default_timeout").as_double();
@@ -249,7 +248,14 @@ private:
         return;
       }
 
-      double timeout = goal->timeout_sec > 0.0 ? goal->timeout_sec : default_timeout_;
+      double timeout = default_timeout_;
+      try {
+        json input = json::parse(goal->input_json);
+        if (input.contains("timeout_sec") && input["timeout_sec"].is_number()) {
+          double ts = input["timeout_sec"].get<double>();
+          if (ts > 0.0) timeout = ts;
+        }
+      } catch (...) {}
       auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout);
 
       char temp_filename[] = "/tmp/cloudsoul_shell_exec_XXXXXX";

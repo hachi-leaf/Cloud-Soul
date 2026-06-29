@@ -23,7 +23,6 @@ set(EXECUTABLE_LIST
   # file_write_node     src/file_write_node.cpp
   file_rdwt_node      src/file_rdwt_node.cpp
   message_send_node   src/message_send_node.cpp
-  # web_search_node     src/web_search_node.cpp
 )
 
 # 批量创建可执行文件
@@ -43,8 +42,6 @@ while(INDEX LESS EXEC_COUNT)
     cs_interfaces
   )
 
-  # web_search_node 需要额外链接 libcurl、libxml2、nlohmann_json
-  if(TARGET_NAME STREQUAL "web_search_node")
     target_link_libraries(${TARGET_NAME}
       ${CURL_LIBRARIES}
       ${LIBXML2_LIBRARIES}
@@ -54,7 +51,6 @@ while(INDEX LESS EXEC_COUNT)
       ${CURL_INCLUDE_DIRS}
       ${LIBXML2_INCLUDE_DIR}
     )
-  endif()
 
   # Add cs_interfaces headers for constants.hpp
   target_include_directories(${TARGET_NAME} PRIVATE ${cs_interfaces_INCLUDE_DIRS})

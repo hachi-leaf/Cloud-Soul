@@ -98,6 +98,8 @@ def main():
     repo_url = ask("记忆仓库 URL (https:// 或 git@)", required=True)
     repo_fork = ask("分支", default="main")
     rule_path = ask("规则文件路径（相对于仓库根目录）", default="prompts/RULE.md")
+    pull_retry_max = int(ask("pull_retry_max    git pull 重试次数", default="3"))
+    push_retry_max = int(ask("push_retry_max    git push 重试次数", default="5"))
 
     # ── Step 3 ──
     step_title(3, "大模型接口")
@@ -132,17 +134,22 @@ def main():
                        default="200000"))
     summary = int(ask("summary_turns         压缩保留最近 N 轮",
                        default="30"))
-    timeout = float(ask("tool_timeout          工具调用超时 (秒)",
-                         default="60.0"))
+    default_timeout = float(ask("default_timeout      工具调用超时 (秒)",
+                                 default="30.0"))
+    cancel_timeout = float(ask("cancel_timeout       取消等待超时 (秒)",
+                                default="2.0"))
+    delay_timeout = float(ask("delay_timeout        管理延迟 (秒)",
+                               default="5.0"))
 
     # Input
     print()
     input_params = {
         "info_timeout": 3.0,
         "discovery_period": 1.0,
-        "system_status_rate": 1.0,
-        "message_receive_rate": 1.0,
+        "publish_rate": 1.0,
+        "info_rate": 1.0,
         "ros_channel": "ros2_msg",
+        "web_chat_channel": "web_chat",
     }
     if ask_confirm("配置 Input 管道参数？（可跳过）", default="N"):
         print(f"  {T}▶ Input 管道{C_RESET}")
@@ -150,12 +157,14 @@ def main():
             ask("info_timeout          子节点心跳超时 (秒)", default="3.0"))
         input_params["discovery_period"] = float(
             ask("discovery_period      发现扫描间隔 (秒)", default="1.0"))
-        input_params["system_status_rate"] = float(
-            ask("system_status_rate    系统状态上报频率 (Hz)", default="1.0"))
-        input_params["message_receive_rate"] = float(
-            ask("message_receive_rate  消息接收心跳频率 (Hz)", default="1.0"))
+        input_params["publish_rate"] = float(
+            ask("publish_rate          系统状态上报频率 (Hz)", default="1.0"))
+        input_params["info_rate"] = float(
+            ask("info_rate             消息接收心跳频率 (Hz)", default="1.0"))
         input_params["ros_channel"] = ask(
             "ros_channel           ROS 消息渠道名称", default="ros2_msg")
+        input_params["web_chat_channel"] = ask(
+            "web_chat_channel      Web 聊天渠道名称", default="web_chat")
     else:
         print(f"    {D}⏭ 已跳过，使用默认值{C_RESET}")
 
@@ -164,8 +173,11 @@ def main():
     output_params = {
         "info_timeout": 3.0,
         "discovery_period": 1.0,
-        "tool_info_period": 1.0,
-        "message_topic": "raw_message",
+        "info_rate": 1.0,
+        "default_timeout": 30.0,
+        "cancel_timeout": 2.0,
+        "delay_timeout": 5.0,
+        "topic_output": "raw_message",
     }
     if ask_confirm("配置 Output 管道参数？（可跳过）", default="N"):
         print(f"  {T}▶ Output 管道{C_RESET}")
@@ -173,10 +185,16 @@ def main():
             ask("info_timeout          子节点心跳超时 (秒)", default="3.0"))
         output_params["discovery_period"] = float(
             ask("discovery_period      发现扫描间隔 (秒)", default="1.0"))
-        output_params["tool_info_period"] = float(
-            ask("tool_info_period      工具心跳周期 (秒)", default="1.0"))
-        output_params["message_topic"] = ask(
-            "message_topic         message_send 输出 topic", default="raw_message")
+        output_params["info_rate"] = float(
+            ask("info_rate             工具心跳周期 (秒)", default="1.0"))
+        output_params["default_timeout"] = float(
+            ask("default_timeout       工具默认超时 (秒)", default="30.0"))
+        output_params["cancel_timeout"] = float(
+            ask("cancel_timeout        取消等待超时 (秒)", default="2.0"))
+        output_params["delay_timeout"] = float(
+            ask("delay_timeout         管理延迟 (秒)", default="5.0"))
+        output_params["topic_output"] = ask(
+            "topic_output          message_send 输出 topic", default="raw_message")
     else:
         print(f"    {D}⏭ 已跳过，使用默认值{C_RESET}")
 
@@ -195,11 +213,15 @@ def main():
             "name": "origin",
             "fork": repo_fork,
             "rule_path": rule_path,
+            "pull_retry_max": pull_retry_max,
+            "push_retry_max": push_retry_max,
         },
         "loop": {
             "max_context_tokens": max_ctx,
             "summary_turns": summary,
-            "tool_timeout": timeout,
+            "default_timeout": default_timeout,
+            "cancel_timeout": cancel_timeout,
+            "delay_timeout": delay_timeout,
         },
         "input": input_params,
         "output": output_params,
@@ -213,11 +235,11 @@ def main():
     print(f"  仓库:      {repo_url}")
     print(f"  默认 LLM:  {H}{default_llm}{C_RESET} ({len(llms)} 个接口)")
     print(f"  上下文:    {max_ctx} tokens / 保留 {summary} 轮")
-    print(f"  工具超时:  {timeout}s")
+    print(f"  超时:      default={default_timeout}s cancel={cancel_timeout}s delay={delay_timeout}s")
     print(f"  Input:     info_timeout={input_params['info_timeout']}s "
-          f"ros_channel={input_params['ros_channel']}")
+          f"ros={input_params['ros_channel']} web={input_params['web_chat_channel']}")
     print(f"  Output:    info_timeout={output_params['info_timeout']}s "
-          f"topic={output_params['message_topic']}")
+          f"topic={output_params['topic_output']}")
 
     print()
     if not ask_confirm("确认写入 config.yaml？", default="Y"):
@@ -248,10 +270,14 @@ def main():
             f.write(f"  name: origin\n")
             f.write(f"  fork: {repo_fork}\n")
             f.write(f"  rule_path: {rule_path}\n")
+            f.write(f"  pull_retry_max: {pull_retry_max}\n")
+            f.write(f"  push_retry_max: {push_retry_max}\n")
             f.write("loop:\n")
             f.write(f"  max_context_tokens: {max_ctx}\n")
             f.write(f"  summary_turns: {summary}\n")
-            f.write(f"  tool_timeout: {timeout}\n")
+            f.write(f"  default_timeout: {default_timeout}\n")
+            f.write(f"  cancel_timeout: {cancel_timeout}\n")
+            f.write(f"  delay_timeout: {delay_timeout}\n")
             for section, params in [("input", input_params), ("output", output_params)]:
                 f.write(f"{section}:\n")
                 for k, v in params.items():

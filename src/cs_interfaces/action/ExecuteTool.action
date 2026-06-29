@@ -1,6 +1,5 @@
 # Goal
 string input_json         # 原有字段，JSON 格式的工具调用请求
-float64 timeout_sec 0.0   # 调用超时时间（秒），0 表示使用节点默认值
 
 ---
 # Result

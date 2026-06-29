@@ -8,7 +8,7 @@
 // Param:
 //  <string>agent_name       --> Agent 名
 //  <float64>info_rate       --> 发布 Tools Info 的频率（Hz）
-//  <float64>default_timeout --> 默认状态下（Agent 将 Action 的 Goal 的 timeout_sec 设为 0 时）Action 的 timeout
+//  <float64>default_timeout --> 文件操作超时（秒），当 LLM 未传 timeout_sec 时使用，默认 30.0
 
 // Topic: /<agent_name>/output/file_rdwt/info
 // Struct:
@@ -17,7 +17,6 @@
 // Action: /<agent_name>/output/file_rdwt
 // Struct:
 //  Goal <string>input_json      --> LLM 输出的 tools_call json 字段，由 FILE_RDWT_INFO_JSON 约束
-//  Goal <float64>timeout_sec    --> Action 调用超时时间（秒），0 表示使用 default_timeout
 //  ---
 //  Results <string>output_json  --> 返回给 LLM tools_callback 字段，为自由字符串
 //  Results <int32>exit_code     --> 错误码，0 为成功，其他值为 Error
@@ -249,7 +248,7 @@ public:
     {
         declare_parameter("agent_name", agent_name);
         declare_parameter("info_rate", 1.0);
-        declare_parameter("default_timeout", 60.0);
+        declare_parameter("default_timeout", 30.0);
 
         double info_rate = get_parameter("info_rate").as_double();
         default_timeout_ = get_parameter("default_timeout").as_double();
@@ -343,8 +342,14 @@ private:
         }
 
         // ---- Timeout ----
-        double timeout = goal->timeout_sec > 0.0
-            ? goal->timeout_sec : default_timeout_;
+        double timeout = default_timeout_;
+      try {
+        json input = json::parse(goal->input_json);
+        if (input.contains("timeout_sec") && input["timeout_sec"].is_number()) {
+          double ts = input["timeout_sec"].get<double>();
+          if (ts > 0.0) timeout = ts;
+        }
+      } catch (...) {}
         auto deadline = std::chrono::steady_clock::now()
             + std::chrono::duration<double>(timeout);
 

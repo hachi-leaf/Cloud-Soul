@@ -481,13 +481,6 @@ private:
             goal_input["arguments"] = arguments;
         }
         goal_msg.input_json = goal_input.dump();
-        // 从 LLM arguments 中提取 timeout_sec（若存在），否则默认 0
-        if (goal_input.contains("timeout_sec") && goal_input["timeout_sec"].is_number()) {
-          goal_msg.timeout_sec = goal_input["timeout_sec"].get<double>();
-          goal_input.erase("timeout_sec");  // 从 input_json 中移除，避免工具误解析
-        } else {
-          goal_msg.timeout_sec = 0.0;
-        }
 
         if (!output_action_client_->wait_for_action_server(std::chrono::seconds(5))) {
             RCLCPP_ERROR(get_logger(), "output action server 不可用，工具 %s 调用失败", tool_name.c_str());
@@ -533,44 +526,11 @@ private:
         RCLCPP_INFO(get_logger(), "工具 %s 返回: exit_code=%d, output=%s",
                     tool_name.c_str(), exit_code, raw_output.substr(0, 200).c_str());
 
-        json tool_content;
-        try {
-            tool_content = json::parse(raw_output);
-        } catch (...) {
-            tool_content["raw"] = raw_output;
-        }
-
         std::stringstream ss;
-        ss << "[工具 " << tool_name << " 执行";
-        if (exit_code == 0) {
-            ss << "成功]\n";
-        } else {
-            ss << "失败, exit_code=" << exit_code << "]\n";
-        }
-
-        if (tool_content.contains("stdout")) {
-            ss << "stdout: " << tool_content["stdout"].get<std::string>() << "\n";
-        }
-        if (tool_content.contains("stderr")) {
-            ss << "stderr: " << tool_content["stderr"].get<std::string>() << "\n";
-        }
-        if (tool_content.contains("error")) {
-            ss << "error: " << tool_content["error"].get<std::string>() << "\n";
-        }
-        if (tool_content.contains("message")) {
-            ss << "message: " << tool_content["message"].get<std::string>() << "\n";
-        }
-        if (tool_content.contains("success")) {
-            ss << "success: " << (tool_content["success"].get<bool>() ? "true" : "false") << "\n";
-        }
-
-        if (!tool_content.contains("stdout") && !tool_content.contains("error") &&
-            !tool_content.contains("message") && !tool_content.contains("success")) {
-            ss << "原始输出: " << raw_output;
-        }
+        ss << "[tool results] " << raw_output;
 
         std::string content_str = ss.str();
-        if (content_str.empty()) content_str = "[空输出]";
+        if (content_str.empty()) content_str = "[no output]";
 
         return {
             {"role", "tool"},

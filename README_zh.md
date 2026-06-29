@@ -65,7 +65,7 @@
   │   cs_core    │◄───│          cs_output               │
   │              │    │                                  │
   │ agent_loop   │    │  shell_exec   file_rdwt          │
-  │ memory_node  │    │  message_send web_search         │
+  │ memory_node  │    │  message_send                   │
   │ call_openai  │    │  output_mgmt (自动发现)           │
   └──────┬───────┘    └──────────────────────────────────┘
          │

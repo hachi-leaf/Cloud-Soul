@@ -3,13 +3,20 @@
 
 """
 Cloud‑Soul 输出子系统 launch 文件
-启动以下节点：
-  - output_mgmt_node    (统一管理节点)
-  - file_rdwt_node       (文件读写工具)
-  - shell_exec_node      (Shell 命令执行工具)
-  - message_send_node    (消息发送工具)
 
-所有节点使用统一的 agent_name 命名空间。
+启动节点：output_mgmt_node / file_rdwt_node / shell_exec_node / message_send_node
+
+参数映射:
+                    output_mgmt  file_rdwt  shell_exec  message_send
+agent_name              ✓           ✓          ✓            ✓
+default_timeout (30s)   ✓           ✓          ✓            ✓
+info_rate (1Hz)                     ✓          ✓            ✓
+info_timeout (3s)       ✓
+discovery_period (1s)   ✓
+cancel_timeout (2s)     ✓
+delay_timeout (5s)      ✓
+topic_output                                        ✓
+
 通过 emulate_tty=True 确保 SIGINT 正确传递给节点，实现优雅退出。
 """
 
@@ -27,8 +34,9 @@ def generate_launch_description():
     agent_name_arg = DeclareLaunchArgument('agent_name', default_value='agent')
     info_timeout_arg = DeclareLaunchArgument('info_timeout', default_value='3.0')
     discovery_period_arg = DeclareLaunchArgument('discovery_period', default_value='1.0')
-    default_timeout_arg = DeclareLaunchArgument('default_timeout', default_value='60.0')
+    default_timeout_arg = DeclareLaunchArgument('default_timeout', default_value='30.0')
     cancel_timeout_arg = DeclareLaunchArgument('cancel_timeout', default_value='2.0')
+    delay_timeout_arg = DeclareLaunchArgument('delay_timeout', default_value='5.0')
     info_rate_arg = DeclareLaunchArgument('info_rate', default_value='1.0')
     topic_output_arg = DeclareLaunchArgument('topic_output', default_value='raw_message')
 
@@ -37,6 +45,7 @@ def generate_launch_description():
     discovery_period = LaunchConfiguration('discovery_period')
     default_timeout = LaunchConfiguration('default_timeout')
     cancel_timeout = LaunchConfiguration('cancel_timeout')
+    delay_timeout = LaunchConfiguration('delay_timeout')
     info_rate = LaunchConfiguration('info_rate')
     topic_output = LaunchConfiguration('topic_output')
 
@@ -51,6 +60,7 @@ def generate_launch_description():
             'discovery_period': discovery_period,
             'default_timeout': default_timeout,
             'cancel_timeout': cancel_timeout,
+            'delay_timeout': delay_timeout,
         }],
         emulate_tty=True,
         output='screen',
@@ -102,6 +112,7 @@ def generate_launch_description():
         discovery_period_arg,
         default_timeout_arg,
         cancel_timeout_arg,
+        delay_timeout_arg,
         info_rate_arg,
         topic_output_arg,
         output_mgmt,

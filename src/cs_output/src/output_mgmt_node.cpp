@@ -9,8 +9,9 @@
 //  <string>agent_name        --> Agent 名
 //  <float64>info_timeout     --> 工具心跳超时时间（秒），默认 3.0
 //  <float64>discovery_period --> 工具发现检查周期（秒），默认 1.0
-//  <float64>default_timeout  --> 默认 Action 超时（秒），当 Agent 的 timeout_sec 设为 0 时使用，默认 60.0
-//  <float64>cancel_timeout   --> 取消等待超时（秒），管理节点 Cancel 子工具后等待其返回的最长时间，默认 2.0
+//  <float64>default_timeout  --> 默认管理超时（秒），当 LLM 未传 timeout_sec 时使用，默认 30.0
+//  <float64>cancel_timeout   --> 取消等待超时（秒），默认 2.0
+//  <float64>delay_timeout    --> 管理延迟（秒），在子工具 timeout 基础上增加的缓冲时间，默认 5.0
 
 // Service: /<agent_name>/output/info
 // Struct:
@@ -21,7 +22,6 @@
 // Action: /<agent_name>/output
 // Struct:
 //  Goal <string>input_json      --> LLM 输出的 tools_call json 字段，必须包含 "name" 和 "arguments"
-//  Goal <float64>timeout_sec    --> Action 调用超时时间（秒），0 表示使用 default_timeout
 //  ---
 //  Results <string>output_json  --> 返回给 LLM tools_callback 字段，为自由字符串
 //  Results <int32>exit_code     --> 错误码，0 为成功，-1 为错误
@@ -31,14 +31,14 @@
 // Action 特性：
 //  1. 工具发现：自动发现 /<agent_name>/output/*/info 话题上的工具节点，通过心跳维持在线状态
 //  2. 心跳超时：工具 info 超过 info_timeout 未更新则标记离线，从工具列表中移除；恢复发布后重新上线
-//  3. 统一代理：接收 LLM tool call，解析 "name" 字段，路由到对应工具节点的 Action，透传 "arguments" 和 timeout_sec
+//  3. 统一代理：接收 LLM tool call，解析 "name" 字段，路由到对应工具节点的 Action，透传 "arguments"
 //  4. 输入校验：
 //     - input_json 必须为合法 JSON 且包含 "name" 字段，否则返回 exit_code = -1, output_json = {"error":"invalid input json"}
 //     - input_json 格式错误时自动尝试修复（去尾逗号、补全括号），修复失败返回上述错误
 //  5. 工具不存在：如果 "name" 对应的工具不在线（从未上线、心跳超时移除），返回 exit_code = -1, output_json = {"error":"tool not found"}
 //  6. 并发控制：同一工具同时只允许一个 Goal 执行，若已有 Goal 在进行中则拒绝新 Goal，返回 exit_code = -1, output_json = {"error":"tool is busy"}
 //  7. 超时控制：
-//     - 使用 timeout_sec 或 default_timeout 作为截止时间
+//     - 从 input_json.arguments.timeout_sec 读取超时，加 delay_timeout 作为管理截止时间
 //     - 管理节点等待工具响应超时 → exit_code = -1, output_json = {"error":"tool execution timeout"}
 //     - 超时后管理节点主动 Cancel 子工具 Goal，并等待 cancel_timeout 秒
 //  8. 取消转发：
@@ -132,13 +132,15 @@ public:
     declare_parameter("agent_name", agent_name);
     declare_parameter("info_timeout", 3.0);
     declare_parameter("discovery_period", 1.0);
-    declare_parameter("default_timeout", 60.0);
+    declare_parameter("default_timeout", 30.0);
     declare_parameter("cancel_timeout", 2.0);
+    declare_parameter("delay_timeout", 5.0);
 
     info_timeout_ = get_parameter("info_timeout").as_double();
     discovery_period_ = get_parameter("discovery_period").as_double();
     default_timeout_ = get_parameter("default_timeout").as_double();
     cancel_timeout_ = get_parameter("cancel_timeout").as_double();
+    delay_timeout_ = get_parameter("delay_timeout").as_double();
 
     // 节点关闭回调：取消定时器，设置关闭标志，使 spin 能退出，Goal 线程能快速结束
     rclcpp::on_shutdown([this]() {
@@ -264,7 +266,15 @@ private:
     std::shared_ptr<ToolInfo> tool;
     try {
       const auto goal = goal_handle->get_goal();
-      double timeout = goal->timeout_sec > 0.0 ? goal->timeout_sec : default_timeout_;
+      double timeout = default_timeout_;
+      try {
+        json input = json::parse(goal->input_json);
+        if (input.contains("arguments") && input["arguments"].contains("timeout_sec") && input["arguments"]["timeout_sec"].is_number()) {
+          double ts = input["arguments"]["timeout_sec"].get<double>();
+          if (ts > 0.0) timeout = ts;
+        }
+      } catch (...) {}
+      timeout += delay_timeout_;
       auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout);
       auto cancel_deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(cancel_timeout_);
 
@@ -335,7 +345,6 @@ private:
           return;
         }
       }
-      tool_goal.timeout_sec = goal->timeout_sec;
 
       // 检查子工具 Action Server 是否可用
       if (!tool->action_client->wait_for_action_server(std::chrono::seconds(1))) {
@@ -397,9 +406,8 @@ private:
               return;
             }
             if (result_future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready) {
-              auto wrapped = result_future.get();
-              result->output_json = wrapped.result->output_json;
-              result->exit_code = (wrapped.result->exit_code == 0) ? 0 : -1;
+              result->output_json = R"({"error":"timed out after )" + std::to_string(timeout) + R"(s","stdout":""})";
+              result->exit_code = -1;
               goal_handle->succeed(result);
               release();
               return;
@@ -438,6 +446,7 @@ private:
   double discovery_period_;
   double default_timeout_;
   double cancel_timeout_;
+  double delay_timeout_;
 
   rclcpp::Service<GetToolsInfo>::SharedPtr info_srv_;
   rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
