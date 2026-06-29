@@ -481,7 +481,13 @@ private:
             goal_input["arguments"] = arguments;
         }
         goal_msg.input_json = goal_input.dump();
-        goal_msg.timeout_sec = 0.0;
+        // 从 LLM arguments 中提取 timeout_sec（若存在），否则默认 0
+        if (goal_input.contains("timeout_sec") && goal_input["timeout_sec"].is_number()) {
+          goal_msg.timeout_sec = goal_input["timeout_sec"].get<double>();
+          goal_input.erase("timeout_sec");  // 从 input_json 中移除，避免工具误解析
+        } else {
+          goal_msg.timeout_sec = 0.0;
+        }
 
         if (!output_action_client_->wait_for_action_server(std::chrono::seconds(5))) {
             RCLCPP_ERROR(get_logger(), "output action server 不可用，工具 %s 调用失败", tool_name.c_str());

@@ -80,6 +80,10 @@ static constexpr const char* SHELL_EXEC_INFO_JSON = R"json({
         "command": {
           "type": "string",
           "description": "要执行的 Shell 命令，可包含多行、管道、变量等。请使用非交互式写法，并添加静默选项避免不必要的进度输出。"
+        },
+        "timeout_sec": {
+          "type": "number",
+          "description": "命令执行超时时间（秒）。默认 60 秒。设 0 使用默认值。建议长时间任务设置合理超时，避免 Agent 挂起。"
         }
       }
     }
