@@ -282,7 +282,7 @@ int main() {
         return 1;
     }
 
-    OpenAIClient client(api_url, api_key, "deepseek-v4-pro");
+    OpenAIClient client(api_url, api_key, "HORIZON-CO-4.7");
     g_client = &client;
 
     g_client->add_message({

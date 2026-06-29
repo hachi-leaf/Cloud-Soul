@@ -120,7 +120,7 @@ public:
                     auto archive_req = std::make_shared<MemoryArchive::Request>();
                     archive_req->json_path = current_json_path_;
                     auto future = memory_archive_client_->async_send_request(archive_req);
-                    if (!wait_for_future(future, std::chrono::seconds(60))) {
+                    if (!wait_for_future(future, std::chrono::seconds(180))) {
                         if (!rclcpp::ok()) break;
                         RCLCPP_WARN(get_logger(), "归档服务超时，重试...");
                         continue;
