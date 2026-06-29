@@ -367,6 +367,9 @@ private:
                 RCLCPP_WARN(get_logger(), "tool_calls 格式错误（非数组/对象）");
                 return false;
             }
+            // API 规范：有 tool_calls 时 content 应为空，保留 reasoning_content
+            if (msg.contains("content") && msg["content"].is_string())
+                msg["content"] = "";
             return true;
         }
 
@@ -378,6 +381,10 @@ private:
                 return false;  // 交给外层替换
             }
         }
+
+        // API 规范：无 tool_calls 时不保留 reasoning_content
+        if (role == "assistant")
+            msg.erase("reasoning_content");
 
         return true;
     }
