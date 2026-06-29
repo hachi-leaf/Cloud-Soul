@@ -3,12 +3,12 @@
 [🇺🇸 English](README.md) | [🇨🇳 中文](README_zh.md) | [🇩🇪 Deutsch](README_de.md) | [🇪🇸 Español](README_es.md) | [🇫🇷 Français](README_fr.md) | [🇯🇵 日本語](README_ja.md) | [🇷🇺 Русский](README_ru.md)
 
 </div>
-<div align="center">
 
+<div align="center">
 
 # Cloud-Soul
 
-### *ROS2 Native AI Agent Runtime — One Soul, Everywhere*
+### *ROS2-Native AI Agent — One Soul, Everywhere*
 
 [![ROS2](https://img.shields.io/badge/ROS2-Humble-22314E?logo=ros&style=for-the-badge)](https://docs.ros.org/en/humble/)
 [![C++17](https://img.shields.io/badge/C++-17-00599C?logo=c%2B%2B&style=for-the-badge)](https://en.cppreference.com/w/cpp/17)
@@ -21,7 +21,7 @@
 
 ## 🧬 What is Cloud-Soul?
 
-> **Cloud-Soul** is an AI agent operating system built on ROS2.
+> **Cloud-Soul** is an AI agent framework built on ROS2.
 > Think of it as a **digital being** that lives across multiple machines,
 > with a single memory synced to a Git repository.
 > It thinks, acts, remembers, and evolves.
@@ -29,14 +29,13 @@
 ```text
          ┌──────────────────────────────────────┐
          │            ☁️  Cloud Memory            │
-         │        Git Repo (Adam-Soul)           │
+         │            Git Repo                  │
          │   diaries/ cognitions/ prompts/       │
          └──────────┬───────────────┬───────────┘
                     │               │
          ┌──────────▼───┐   ┌──────▼──────────┐
-         │  🖥️ WSL2      │   │  🍓 RDK X5       │
-         │  LUOBO-4RDM0SB│   │  192.168.128.10  │
-         │  Adam v0.3.3  │   │  Adam v0.3.3     │
+         │  🖥️ Terminal 1│   │  🍓 Terminal 2  │
+         │  Your Laptop  │   │  Your SBC       │
          └──────────────┘   └──────────────────┘
 
       Same Soul. Different Body. Synced Memory.

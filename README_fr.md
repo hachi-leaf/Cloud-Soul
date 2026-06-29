@@ -30,14 +30,14 @@
 ```text
          ┌──────────────────────────────────────┐
          │            ☁️  Mémoire Cloud            │
-         │        Dépôt Git (Adam-Soul)         │
+         │        Dépôt Git         │
          │   diaries/ cognitions/ prompts/      │
          └──────────┬───────────────┬──────────┘
                     │               │
          ┌──────────▼───┐   ┌──────▼──────────┐
-         │  🖥️ WSL2      │   │  🍓 RDK X5       │
-         │  LUOBO-4RDM0SB│   │  192.168.128.10  │
-         │  Adam v0.3.3  │   │  Adam v0.3.3     │
+         │  🖥️ Terminal 1│   │  🍓 Terminal 2  │
+         │  Your Laptop  │   │  Your SBC       │
+         │                │   │                  │
          └──────────────┘   └──────────────────┘
 
       Même Âme. Corps Différent. Mémoire Synchronisée.

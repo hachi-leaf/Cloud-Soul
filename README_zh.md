@@ -8,7 +8,7 @@
 
 # Cloud-Soul
 
-### *ROS2 原生 AI Agent 运行时 — 一个灵魂，无处不在*
+### *基于 ROS2 的 AI 智能体 — 一个灵魂，多端共生*
 
 [![ROS2](https://img.shields.io/badge/ROS2-Humble-22314E?logo=ros&style=for-the-badge)](https://docs.ros.org/en/humble/)
 [![C++17](https://img.shields.io/badge/C++-17-00599C?logo=c%2B%2B&style=for-the-badge)](https://en.cppreference.com/w/cpp/17)
@@ -21,21 +21,20 @@
 
 ## 🧬 什么是 Cloud-Soul？
 
-> **Cloud-Soul** 是一个基于 ROS2 构建的 AI Agent 操作系统。
+> **Cloud-Soul** 是一个基于 ROS2 构建的 AI 智能体框架。
 > 把它想象成一个**数字生命体**——跨多台机器运行，
 > 所有记忆同步到 Git 仓库。它思考、行动、记忆、进化。
 
 ```text
          ┌──────────────────────────────────────┐
          │            ☁️  云端记忆                │
-         │        Git 仓库 (Adam-Soul)           │
+         │             Git 仓库                  │
          │   diaries/ cognitions/ prompts/       │
          └──────────┬───────────────┬───────────┘
                     │               │
          ┌──────────▼───┐   ┌──────▼──────────┐
-         │  🖥️ WSL2      │   │  🍓 RDK X5       │
-         │  LUOBO-4RDM0SB│   │  192.168.128.10  │
-         │  Adam v0.3.3  │   │  Adam v0.3.3     │
+         │  🖥️ 终端 1    │   │  🍓 终端 2       │
+         │  你的笔记本   │   │  你的开发板      │
          └──────────────┘   └──────────────────┘
 
       同一个灵魂。不同的躯体。同步的记忆。
