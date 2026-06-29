@@ -147,7 +147,7 @@ cd Cloud-Soul && colcon build --symlink-install
 |---------|----------|
 | Последняя | `v0.3.3-Beta` |
 | Пакетов | 4 (`cs_core` `cs_input` `cs_output` `cs_interfaces`) |
-| Инструментов | 5 (`shell_exec` `file_rdwt` `message_send` `web_search` `web_chat`) |
+| Инструментов | 3 (`shell_exec` `file_rdwt` `message_send` `web_search` `web_chat`) |
 | Сенсоров | 3 (`system_status` `message_receive` `ros_msg`) |
 | Узлов | 10+ |
 
