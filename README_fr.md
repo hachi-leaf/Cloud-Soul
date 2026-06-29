@@ -6,7 +6,6 @@
 
 <div align="center">
 
-<img src="docs/logo.svg" width="180" alt="Cloud-Soul">
 
 # Cloud-Soul
 
