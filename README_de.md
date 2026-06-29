@@ -29,16 +29,14 @@
 
 ```text
          ┌──────────────────────────────────────┐
-         │            ☁️  Cloud-Speicher           │
-         │        Git-Repo          │
-         │   diaries/ cognitions/ prompts/      │
-         └──────────┬───────────────┬──────────┘
-                    │               │
-         ┌──────────▼───┐   ┌──────▼──────────┐
-         │  🖥️ Terminal 1│   │  🍓 Terminal 2  │
-         │  Your Laptop  │   │  Your SBC       │
-         │                │   │                  │
-         └──────────────┘   └──────────────────┘
+         │            ☁️  Cloud Memory            │
+         │              Git Repo                │
+         │     diaries/ cognitions/ prompts/     │
+         └──────┬──────────┬──────────┬─────────┘
+                │          │          │
+         ┌──────▼────┐ ┌───▼──────┐ ┌▼──────────┐
+         │  🖥️  PC    │ │ 🍓  SBC  │ │ ☁️  Server │
+         └───────────┘ └──────────┘ └───────────┘
 
       Gleiche Seele. Anderer Körper. Synchronisiertes Gedächtnis.
 ```

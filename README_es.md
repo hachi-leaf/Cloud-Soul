@@ -29,16 +29,14 @@
 
 ```text
          ┌──────────────────────────────────────┐
-         │            ☁️  Memoria en la Nube       │
-         │        Repo Git          │
-         │   diaries/ cognitions/ prompts/      │
-         └──────────┬───────────────┬──────────┘
-                    │               │
-         ┌──────────▼───┐   ┌──────▼──────────┐
-         │  🖥️ Terminal 1│   │  🍓 Terminal 2  │
-         │  Your Laptop  │   │  Your SBC       │
-         │                │   │                  │
-         └──────────────┘   └──────────────────┘
+         │            ☁️  Cloud Memory            │
+         │              Git Repo                │
+         │     diaries/ cognitions/ prompts/     │
+         └──────┬──────────┬──────────┬─────────┘
+                │          │          │
+         ┌──────▼────┐ ┌───▼──────┐ ┌▼──────────┐
+         │  🖥️  PC    │ │ 🍓  SBC  │ │ ☁️  Server │
+         └───────────┘ └──────────┘ └───────────┘
 
       Misma Alma. Diferente Cuerpo. Memoria Sincronizada.
 ```
