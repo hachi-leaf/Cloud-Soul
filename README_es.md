@@ -1,211 +1,165 @@
+<div align="center">
+
+[🇺🇸 English](README.md) | [🇨🇳 中文](README_zh.md) | [🇩🇪 Deutsch](README_de.md) | [🇪🇸 Español](README_es.md) | [🇫🇷 Français](README_fr.md) | [🇯🇵 日本語](README_ja.md) | [🇷🇺 Русский](README_ru.md)
+
+</div>
+
+<div align="center">
+
+<img src="docs/logo.svg" width="180" alt="Cloud-Soul">
+
 # Cloud-Soul
 
-<p align="left">
-  <img src="https://img.shields.io/badge/ROS2-Humble-22314E?logo=ros" alt="ROS2">
-  <img src="https://img.shields.io/badge/C++-17-00599C?logo=c%2B%2B" alt="C++17">
-  <img src="https://img.shields.io/badge/MIT-License-97CA00" alt="MIT">
-  <img src="https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu" alt="Ubuntu">
-</p>
+### *Entorno de Ejecución de Agente IA Nativo ROS2 — Un Alma, en Todas Partes*
 
-🌐 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | [Русский](README_ru.md) | [Français](README_fr.md) | [Deutsch](README_de.md) | [Español](#)
+[![ROS2](https://img.shields.io/badge/ROS2-Humble-22314E?logo=ros&style=for-the-badge)](https://docs.ros.org/en/humble/)
+[![C++17](https://img.shields.io/badge/C++-17-00599C?logo=c%2B%2B&style=for-the-badge)](https://en.cppreference.com/w/cpp/17)
+[![MIT](https://img.shields.io/badge/License-MIT-97CA00?style=for-the-badge)](LICENSE)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu&style=for-the-badge)](https://releases.ubuntu.com/22.04/)
 
-Entorno de ejecución de agente IA basado en ROS2. Un agente, múltiples terminales, memoria sincronizada en la nube.
+</div>
+
+---
+
+## 🧬 ¿Qué es Cloud-Soul?
+
+> **Cloud-Soul** es un sistema operativo de agente IA construido sobre ROS2.
+> Piensa en él como un **ser digital** que vive en múltiples máquinas,
+> con una única memoria sincronizada en un repositorio Git.
+> Piensa, actúa, recuerda y evoluciona.
+
+```text
+         ┌──────────────────────────────────────┐
+         │            ☁️  Memoria en la Nube       │
+         │        Repo Git (Adam-Soul)          │
+         │   diaries/ cognitions/ prompts/      │
+         └──────────┬───────────────┬──────────┘
+                    │               │
+         ┌──────────▼───┐   ┌──────▼──────────┐
+         │  🖥️ WSL2      │   │  🍓 RDK X5       │
+         │  LUOBO-4RDM0SB│   │  192.168.128.10  │
+         │  Adam v0.3.3  │   │  Adam v0.3.3     │
+         └──────────────┘   └──────────────────┘
+
+      Misma Alma. Diferente Cuerpo. Memoria Sincronizada.
+```
+
+---
+
+## ⚡ Características
+
+|   | Característica | Descripción |
+|---|----------------|-------------|
+| 🔄 | **Multi-Terminal** | Un agente, muchas máquinas — cambia sin problemas |
+| ☁️ | **Memoria Git** | Todos los recuerdos se sincronizan vía Git |
+| 🧩 | **Herramientas Plugin** | Nodos de acción ROS2 auto-descubiertos |
+| 🎛️ | **Multi-Canal** | Web Chat / ROS2 / Email / Terminal |
+| 💭 | **Modo Pensante** | Razonamiento profundo con salida de pensamiento en streaming |
+| ⚡ | **Sensores Instantáneos** | Estado del sistema, mensajes, entradas personalizadas |
 
 ---
 
 ## 🏗️ Arquitectura
 
 ```
-                  ┌─────────────┐
-                  │  LLM (API)  │
-                  └──────┬──────┘
-                         │
-┌────────────┐    ┌──────┴───────┐    ┌─────────────────────────────┐
-│  cs_input  │───→│   cs_core    │───→│         cs_output           │
-│            │    │              │    │                             │
-│ system_    │    │ agent_loop   │    │ shell_exec    file_read     │
-│ status     │    │ memory_node  │    │ file_write    message_send  │
-│ message_   │    │ call_openai  │    │ web_search    web_chat      │
-│ receive    │    │              │    │                             │
-│ input_mgmt │    │ Git repo ↔   │    │ output_mgmt                 │
-└────────────┘    │  cognitions  │    └─────────────────────────────┘
-                  │  diaries     │
-                  └──────────────┘
+  ┌─────────────┐
+  │  LLM (API)  │  DeepSeek / compatible con OpenAI
+  └──────┬──────┘
+         │
+  ┌──────┴───────┐    ┌──────────────────────────────────┐
+  │   cs_core    │◄───│          cs_output               │
+  │              │    │                                  │
+  │ agent_loop   │    │  shell_exec   file_rdwt          │
+  │ memory_node  │    │  message_send web_search         │
+  │ call_openai  │    │  output_mgmt (auto-descubrir)    │
+  └──────┬───────┘    └──────────────────────────────────┘
+         │
+  ┌──────┴───────┐
+  │   cs_input   │
+  │              │
+  │ system_status│   CPU · RAM · Disco · Red · machine-id
+  │ msg_receive  │   web_chat · topic ROS2 · email
+  │ input_mgmt   │   agregador de instantáneas
+  └──────────────┘
 ```
 
-Tres paquetes, conectados mediante la acción ROS2 `/agent_loop/_action/execute_tool`:
-
-| Paquete | Función |
-|---------|---------|
-| `cs_input` | Sensores: estado del sistema, suscripción a mensajes |
-| `cs_core` | Bucle del agente (LLM ⇄ herramientas), memoria basada en Git |
-| `cs_output` | Herramientas: shell, E/S de archivos, mensajería, búsqueda web, chat web |
+> Tres paquetes, herramientas infinitas. Conectados mediante ROS2 Actions.
 
 ---
 
-## ⚙️ Funcionamiento
-
-```
-  system_status  ──┐
-  message_receive ─┤
-                   ├──→ input_mgmt (instantánea) ──→ agent_loop
-                   │                                    │
-                   │     ┌──────────────────────────────┘
-                   │     ▼
-                   │   LLM: razonamiento → llamadas a herramientas
-                   │     │
-                   │     ▼
-                   │   output_mgmt → tool_node → resultado
-                   │     │
-                   │     ▼
-                   │   memory_node: archivado en diario Git
-                   │     │
-                   └─────┘ (siguiente ciclo)
-```
-
-- Mensaje de usuario → procesamiento inmediato
-- Inactivo → bucle sobre heartbeat system_status
-- Contexto supera el umbral → LLM comprime en diario, reinicia
-- Memoria persistida como Markdown en repo Git; pull/push por ciclo
-
----
-
-## 🚀 Inicio rápido
-
-**Requisitos**: Ubuntu 22.04, ROS2 Humble, clave API DeepSeek (o endpoint compatible).
+## 🚀 Inicio Rápido
 
 ```bash
-# dependencias del sistema
+# 1. Dependencias del sistema
 sudo apt install ros-humble-desktop libgit2-dev libcurl4-openssl-dev \
-  nlohmann-json3-dev libxml2-dev s-nail
+  nlohmann-json3-dev libxml2-dev s-nail python3-yaml
 
-# clonar y compilar
-git clone git@github.com:your-org/Cloud-Soul.git
-cd Cloud-Soul
-colcon build --symlink-install
+# 2. Clonar y Compilar
+git clone git@github.com:hachi-leaf/Cloud-Soul.git
+cd Cloud-Soul && colcon build --symlink-install
+
+# 3. Configurar (asistente interactivo)
+./config
+
+# 4. Iniciar
+./start
 ```
 
-**Repo de memoria** — fork [cloud-soul-memory](https://github.com/your-org/cloud-soul-memory), configure SSH push.
-
-**Lanzamiento** (con variables de entorno):
-
-```bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-export OPENAI_API_KEY=sk-xxx
-export OPENAI_BASE_URL=https://api.deepseek.com/v1
-export OPENAI_MODEL=deepseek-chat
-
-# 1) Iniciar memoria
-ros2 launch cs_core cs_core.launch.py \
-  agent_name:=agent \
-  repo_url:=git@github.com:your-org/cloud-soul-memory.git \
-  repo_dir:=$HOME/.cloudsoul/soul_repo
-
-# 2) Iniciar sensores
-ros2 launch cs_input cs_input.launch.py agent_name:=agent
-
-# 3) Iniciar herramientas
-ros2 launch cs_output cs_output.launch.py agent_name:=agent
-
-# 4) (Opcional) Chat web
-python3 web_chat_server.py --agent agent &
-```
-
-**Ejecutar como root** (para acceso a nivel de sistema):
-
-```bash
-sudo -E bash -c 'source /opt/ros/humble/setup.bash && source install/setup.bash && \
-  ros2 launch cs_core cs_core.launch.py agent_name:=agent \
-  repo_url:=git@github.com:your-org/cloud-soul-memory.git \
-  repo_dir:=$HOME/.cloudsoul/soul_repo'
-
-sudo -E bash -c 'source /opt/ros/humble/setup.bash && source install/setup.bash && \
-  ros2 launch cs_input cs_input.launch.py agent_name:=agent'
-
-sudo -E bash -c 'source /opt/ros/humble/setup.bash && source install/setup.bash && \
-  ros2 launch cs_output cs_output.launch.py agent_name:=agent'
-```
-
-Todos los nodos soportan `respawn=True` — ROS2 reinicia automáticamente los nodos caídos.
+> Abre `http://localhost:8080` para el chat web.
 
 ---
 
-## 🧠 Modelo de memoria
+## 🧬 Modelo de Memoria
 
 ```
 ~/.cloudsoul/soul_repo/
 ├── prompts/
-│   ├── RULE.md        # prompt del sistema (ref [cognitions/*.md])
-│   └── COMPRESS.md    # prompt de compresión
+│   ├── RULE.md       ← Prompt del sistema (refs en vivo a cognitions)
+│   └── COMPRESS.md   ← Prompt de compresión de contexto
 ├── cognitions/
-│   ├── SELF.md        # identidad del agente
-│   ├── MASTER.md      # perfil de usuario
-│   ├── METHOD.md      # reglas de comportamiento
-│   └── WORLD.md       # hechos conocidos
+│   ├── SELF.md       ← Quién soy
+│   ├── MASTER.md     ← Mi usuario
+│   ├── METHOD.md     ← Cómo trabajo
+│   └── WORLD.md      ← Lo que sé
 └── diaries/
-    └── YYYYMMDD.md    # registro diario (comprimido por LLM)
+    └── 20260629.md   ← Registro de hoy (comprimido por LLM)
 ```
 
 ---
 
-## 🔌 Nodos
+## 🔧 Extender
 
-### cs_core
+**Añadir una Herramienta** — un archivo, auto-descubierta:
 
-| Nodo | Descripción |
-|------|-------------|
-| `agent_loop_node` | Bucle principal: instantánea → LLM → herramientas → repetir. Gestión de contexto |
-| `memory_node` | Git recall/archive: obtener cogniciones, enviar diarios |
+1. Crea `src/cs_output/src/my_tool_node.cpp`
+2. Publica info en `/{agent}/output/my_tool/info` (transient_local)
+3. Sirve la acción `ExecuteTool` en `/{agent}/output/my_tool`
 
-### cs_input
+**Añadir un Sensor** — mismo patrón:
 
-| Nodo | Tópico | Descripción |
-|------|--------|-------------|
-| `system_status_node` | `/{agent}/input/system_status` | CPU, RAM, disco, red, hostname, machine-id (1 Hz) |
-| `message_receive_node` | `/{agent}/input/message_receive` | Recepción de mensajes ROS2 / web_chat |
-| `input_mgmt_node` | `/{agent}/input` (srv) | Agregación de datos de sensores en instantánea |
+1. Publica `InputInfo` en `/{agent}/input/my_sensor/info`
+2. Publica datos en `/{agent}/input/my_sensor`
 
-### cs_output
-
-| Nodo | Acción | Descripción |
-|------|--------|-------------|
-| `shell_exec_node` | execute_tool | Ejecución de comandos shell |
-| `file_read_node` | execute_tool | Lectura de archivos (offset/longitud/codificación) |
-| `file_write_node` | execute_tool | Escritura de archivos (sobrescribir/añadir) |
-| `message_send_node` | execute_tool | Email (s-nail), publicación ROS2, respuesta web_chat |
-| `web_search_node` | execute_tool | Búsqueda web con fallback multi-motor |
-| `web_chat_server.py` | (Flask SSE) | Interfaz de chat en navegador (puerto 8080) |
-| `output_mgmt_node` | execute_tool | Descubrimiento automático y enrutamiento a herramientas |
+> `input_mgmt_node` y `output_mgmt_node` se encargan del resto.
 
 ---
 
-## 🔧 Configuración
+## 📊 Estado
 
-| Parámetro | Nodo | Predeterminado |
-|-----------|------|----------------|
-| `agent_name` | todos | `agent` |
-| `repo_url` | memory_node | — requerido |
-| `repo_dir` | memory_node | `~/.cloudsoul/soul_repo` |
-| `max_context_tokens` | agent_loop_node | `200000` |
-| `summary_turns` | agent_loop_node | `30` |
-| `tool_timeout` | cs_core / cs_output | `60.0` |
-| `info_timeout` | input/output mgmt | `3.0` |
-
-Variables de entorno: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`.
+| Métrica | Valor |
+|---------|-------|
+| Última | `v0.3.3-Beta` |
+| Paquetes | 4 (`cs_core` `cs_input` `cs_output` `cs_interfaces`) |
+| Herramientas | 5 (`shell_exec` `file_rdwt` `message_send` `web_search` `web_chat`) |
+| Sensores | 3 (`system_status` `message_receive` `ros_msg`) |
+| Nodos | 10+ |
 
 ---
 
-## 🎨 Personalización
+<div align="center">
 
-1. Fork [cloud-soul-memory](https://github.com/your-org/cloud-soul-memory), edite `cognitions/`
-2. Añadir herramientas: cree un nodo en `cs_output/src/` que publique `/{agent}/output/<name>/info` (descriptor JSON, `std_msgs/String`, QoS transient_local). `output_mgmt_node` lo descubre automáticamente
-3. Añadir sensores: cree un nodo en `cs_input/src/` que publique `/{agent}/input/<name>/info` (mensaje `InputInfo`, QoS transient_local) y datos `/{agent}/input/<name>`. `input_mgmt_node` lo descubre automáticamente
-4. `cs_interfaces/include/cs_interfaces/constants.hpp` — todos los timeouts, códigos de error y mensajes centralizados
+**Construido con ❤️ sobre ROS2 Humble**
 
----
+*"El alma está en la nube, el cuerpo está en todas partes."*
 
-## 📄 Licencia
-
-MIT
+</div>

@@ -1,194 +1,165 @@
+<div align="center">
+
+[🇺🇸 English](README.md) | [🇨🇳 中文](README_zh.md) | [🇩🇪 Deutsch](README_de.md) | [🇪🇸 Español](README_es.md) | [🇫🇷 Français](README_fr.md) | [🇯🇵 日本語](README_ja.md) | [🇷🇺 Русский](README_ru.md)
+
+</div>
+
+<div align="center">
+
+<img src="docs/logo.svg" width="180" alt="Cloud-Soul">
+
 # Cloud-Soul
 
-<p align="left">
-  <img src="https://img.shields.io/badge/ROS2-Humble-22314E?logo=ros" alt="ROS2">
-  <img src="https://img.shields.io/badge/C++-17-00599C?logo=c%2B%2B" alt="C++17">
-  <img src="https://img.shields.io/badge/MIT-License-97CA00" alt="MIT">
-  <img src="https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu" alt="Ubuntu">
-</p>
+### *ROS2 ネイティブ AI エージェント ランタイム — 一つの魂、どこにでも*
 
-🌐 [English](README.md) | [中文](README_zh.md) | [日本語](#) | [Русский](README_ru.md) | [Français](README_fr.md) | [Deutsch](README_de.md) | [Español](README_es.md)
+[![ROS2](https://img.shields.io/badge/ROS2-Humble-22314E?logo=ros&style=for-the-badge)](https://docs.ros.org/en/humble/)
+[![C++17](https://img.shields.io/badge/C++-17-00599C?logo=c%2B%2B&style=for-the-badge)](https://en.cppreference.com/w/cpp/17)
+[![MIT](https://img.shields.io/badge/License-MIT-97CA00?style=for-the-badge)](LICENSE)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu&style=for-the-badge)](https://releases.ubuntu.com/22.04/)
 
-ROS2 ベースの AI エージェントランタイム。一つのエージェント、複数端末、クラウド同期メモリ。
+</div>
+
+---
+
+## 🧬 Cloud-Soul とは？
+
+> **Cloud-Soul** は ROS2 上に構築された AI エージェント OS です。
+> 複数のマシンにまたがって生きる**デジタル生命体**と考えてください。
+> 単一の記憶が Git リポジトリに同期され、
+> 思考し、行動し、記憶し、進化します。
+
+```text
+         ┌──────────────────────────────────────┐
+         │            ☁️  クラウドメモリ            │
+         │        Git リポジトリ (Adam-Soul)      │
+         │   diaries/ cognitions/ prompts/      │
+         └──────────┬───────────────┬──────────┘
+                    │               │
+         ┌──────────▼───┐   ┌──────▼──────────┐
+         │  🖥️ WSL2      │   │  🍓 RDK X5       │
+         │  LUOBO-4RDM0SB│   │  192.168.128.10  │
+         │  Adam v0.3.3  │   │  Adam v0.3.3     │
+         └──────────────┘   └──────────────────┘
+
+      同じ魂。違う体。同期された記憶。
+```
+
+---
+
+## ⚡ 機能
+
+|   | 機能 | 説明 |
+|---|------|------|
+| 🔄 | **マルチターミナル** | 一つのエージェント、複数のマシン — シームレスに切り替え |
+| ☁️ | **Git メモリ** | 全ての記憶が Git 経由で自動同期 |
+| 🧩 | **プラグインツール** | 自動検出される ROS2 アクションノード |
+| 🎛️ | **マルチチャネル** | Web チャット / ROS2 / メール / ターミナル |
+| 💭 | **思考モード** | 深い推論とストリーミング思考出力 |
+| ⚡ | **スナップインセンサー** | システム状態、メッセージ、カスタム入力 |
 
 ---
 
 ## 🏗️ アーキテクチャ
 
 ```
-                  ┌─────────────┐
-                  │  LLM (API)  │
-                  └──────┬──────┘
-                         │
-┌────────────┐    ┌──────┴───────┐    ┌─────────────────────────────┐
-│  cs_input  │───→│   cs_core    │───→│         cs_output           │
-│            │    │              │    │                             │
-│ system_    │    │ agent_loop   │    │ shell_exec    file_read     │
-│ status     │    │ memory_node  │    │ file_write    message_send  │
-│ message_   │    │ call_openai  │    │ web_search    web_chat      │
-│ receive    │    │              │    │                             │
-│ input_mgmt │    │ Git repo ↔   │    │ output_mgmt                 │
-└────────────┘    │  cognitions  │    └─────────────────────────────┘
-                  │  diaries     │
-                  └──────────────┘
+  ┌─────────────┐
+  │  LLM (API)  │  DeepSeek / OpenAI 互換
+  └──────┬──────┘
+         │
+  ┌──────┴───────┐    ┌──────────────────────────────────┐
+  │   cs_core    │◄───│          cs_output               │
+  │              │    │                                  │
+  │ agent_loop   │    │  shell_exec   file_rdwt          │
+  │ memory_node  │    │  message_send web_search         │
+  │ call_openai  │    │  output_mgmt (自動検出)           │
+  └──────┬───────┘    └──────────────────────────────────┘
+         │
+  ┌──────┴───────┐
+  │   cs_input   │
+  │              │
+  │ system_status│   CPU · メモリ · ディスク · ネットワーク · machine-id
+  │ msg_receive  │   web_chat · ROS2 トピック · メール
+  │ input_mgmt   │   スナップショット集約
+  └──────────────┘
 ```
 
-三つのパッケージ、ROS2 アクション `/agent_loop/_action/execute_tool` で接続：
-
-| パッケージ | 役割 |
-|-----------|------|
-| `cs_input` | センサー：システム状態、ユーザーメッセージ購読 |
-| `cs_core` | エージェントループ (LLM ⇄ ツール)、Git ベースメモリ |
-| `cs_output` | ツール：シェル、ファイル I/O、メッセージ、Web 検索、Web チャット |
-
----
-
-## ⚙️ 動作の仕組み
-
-```
-  system_status  ──┐
-  message_receive ─┤
-                   ├──→ input_mgmt (スナップショット) ──→ agent_loop
-                   │                                         │
-                   │     ┌───────────────────────────────────┘
-                   │     ▼
-                   │   LLM: 推論 → ツール呼び出し
-                   │     │
-                   │     ▼
-                   │   output_mgmt → tool_node → 結果
-                   │     │
-                   │     ▼
-                   │   memory_node: Git 日記にアーカイブ
-                   │     │
-                   └─────┘ (次のサイクル)
-```
-
-- ユーザーメッセージ → 即時処理
-- アイドル時 → system_status ハートビートでループ
-- コンテキストが閾値を超える → LLM が日記に圧縮・リセット
-- メモリは Git リポジトリの Markdown として永続化。サイクル毎に pull/push
+> 3つのパッケージ、無限のツール。ROS2 Actions で接続。
 
 ---
 
 ## 🚀 クイックスタート
 
-**前提条件**: Ubuntu 22.04, ROS2 Humble, DeepSeek 互換の API キー。
-
 ```bash
-# システム依存
+# 1. システム依存関係
 sudo apt install ros-humble-desktop libgit2-dev libcurl4-openssl-dev \
   nlohmann-json3-dev libxml2-dev s-nail python3-yaml
 
-# クローン & ビルド
-git clone git@github.com:your-org/Cloud-Soul.git
-cd Cloud-Soul
-colcon build --symlink-install
-```
+# 2. クローン & ビルド
+git clone git@github.com:hachi-leaf/Cloud-Soul.git
+cd Cloud-Soul && colcon build --symlink-install
 
-**メモリリポジトリ** — [cloud-soul-memory](https://github.com/your-org/cloud-soul-memory) をフォークし、SSH プッシュを設定。
-
-**初回セットアップ** (対話型ウィザード):
-
-```bash
+# 3. 設定 (対話型ウィザード)
 ./config
-```
 
-`~/.cloudsoul/config.yaml` を生成し、エージェント名、API 認証情報、リポジトリ URL、各種調整パラメータを設定。
-
-**すべて起動** (1 コマンド):
-
-```bash
+# 4. 起動
 ./start
 ```
 
-`cs_input`、`cs_output`、`cs_core`、`web_chat` (Flask SSE、ポート 8080) を自動起動。ログは `/tmp/cloudsoul_*.log` に出力。
-
-**root で実行** (システムレベルのアクセスが必要な場合):
-
-```bash
-sudo -E ./start
-```
-
-全ノード `respawn=True` 対応 — ノードがクラッシュしても ROS2 が自動再起動。
+> Web チャットは `http://localhost:8080` を開いてください。
 
 ---
 
-## 🧠 メモリモデル
+## 🧬 メモリモデル
 
 ```
 ~/.cloudsoul/soul_repo/
 ├── prompts/
-│   ├── RULE.md        # システムプロンプト ([cognitions/*.md] を参照)
-│   └── COMPRESS.md    # 圧縮プロンプト
+│   ├── RULE.md       ← システムプロンプト (cognitions をライブ参照)
+│   └── COMPRESS.md   ← コンテキスト圧縮プロンプト
 ├── cognitions/
-│   ├── SELF.md        # エージェントのアイデンティティ
-│   ├── MASTER.md      # ユーザープロファイル
-│   ├── METHOD.md      # 行動ルール
-│   └── WORLD.md       # 既知の事実
+│   ├── SELF.md       ← 私は誰か
+│   ├── MASTER.md     ← 私のユーザー
+│   ├── METHOD.md     ← 私の働き方
+│   └── WORLD.md      ← 私が知っていること
 └── diaries/
-    └── YYYYMMDD.md    # 日次ログ (LLM 圧縮)
+    └── 20260629.md   ← 今日のログ (LLM 圧縮)
 ```
 
 ---
 
-## 🔌 ノード
+## 🔧 拡張
 
-### cs_core
+**ツールの追加** — 1ファイルで自動検出：
 
-| ノード | 説明 |
-|------|------|
-| `agent_loop_node` | メインループ：スナップショット → LLM → ツール → 繰り返し。コンテキスト管理 |
-| `memory_node` | Git リコール/アーカイブ：認知をプル、日記をプッシュ |
+1. `src/cs_output/src/my_tool_node.cpp` を作成
+2. `/{agent}/output/my_tool/info` に情報を公開 (transient_local)
+3. `/{agent}/output/my_tool` で `ExecuteTool` アクションを提供
 
-### cs_input
+**センサーの追加** — 同じパターン：
 
-| ノード | トピック | 説明 |
-|------|------|------|
-| `system_status_node` | `/{agent}/input/system_status` | CPU、メモリ、ディスク、ネットワーク、ホスト名、machine-id (1 Hz) |
-| `message_receive_node` | `/{agent}/input/message_receive` | ROS2 / web_chat メッセージ受信 |
-| `input_mgmt_node` | `/{agent}/input` (srv) | センサーデータをスナップショットに集約 |
+1. `/{agent}/input/my_sensor/info` に `InputInfo` を公開
+2. `/{agent}/input/my_sensor` にデータを公開
 
-### cs_output
-
-| ノード | アクション | 説明 |
-|------|--------|------|
-| `shell_exec_node` | execute_tool | シェルコマンド実行 |
-| `file_read_node` | execute_tool | ファイル読み取り (オフセット/長さ/エンコーディング) |
-| `file_write_node` | execute_tool | ファイル書き込み (上書き/追記) |
-| `message_send_node` | execute_tool | メール (s-nail)、ROS2 パブリッシュ、web_chat 返信 |
-| `web_search_node` | execute_tool | Web 検索、マルチエンジンフォールバック |
-| `web_chat_server.py` | (Flask SSE) | ブラウザチャットインターフェース (ポート 8080) |
-| `output_mgmt_node` | execute_tool | ツールノードを自動検出し呼び出しをルーティング |
+> `input_mgmt_node` と `output_mgmt_node` が残りを処理します。
 
 ---
 
-## 🔧 設定
+## 📊 ステータス
 
-すべてのパラメータは `~/.cloudsoul/config.yaml`（`./config` で生成）に集約。
-
-| パラメータ | ノード | デフォルト |
-|-----------|------|---------|
-| `agent_name` | 全ノード | `agent` |
-| `repo.url` | memory_node | — 必須 |
-| `loop.max_context_tokens` | agent_loop_node | `200000` |
-| `loop.summary_turns` | agent_loop_node | `25` |
-| `loop.tool_timeout` | cs_core / cs_output | `60.0` |
-| `input.info_timeout` | input mgmt | `3.0` |
-| `output.info_timeout` | output mgmt | `3.0` |
-
-LLM 設定は `config.yaml` の `llms` リスト内にあり、`default_llm` で使用する LLM を指定。
+| 指標 | 値 |
+|------|-----|
+| 最新 | `v0.3.3-Beta` |
+| パッケージ | 4 (`cs_core` `cs_input` `cs_output` `cs_interfaces`) |
+| ツール | 5 (`shell_exec` `file_rdwt` `message_send` `web_search` `web_chat`) |
+| センサー | 3 (`system_status` `message_receive` `ros_msg`) |
+| ノード | 10+ |
 
 ---
 
-## 🎨 カスタマイズ
+<div align="center">
 
-1. [cloud-soul-memory](https://github.com/your-org/cloud-soul-memory) をフォークし `cognitions/` を編集
-2. ツール追加：`cs_output/src/` にノードを作成し `/{agent}/output/<name>/info` トピック（JSONツール記述子、`std_msgs/String`、QoS transient_local）を発行。`output_mgmt_node` が自動検出
-3. センサー追加：`cs_input/src/` にノードを作成し `/{agent}/input/<name>/info` トピック（`InputInfo` メッセージ、QoS transient_local）と `/{agent}/input/<name>` データを発行。`input_mgmt_node` が自動検出
-4. `cs_interfaces/include/cs_interfaces/constants.hpp` — 全タイムアウト、エラーコード、メッセージ文字列を一元管理
+**ROS2 Humble 上に ❤️ を込めて構築**
 
----
+*"魂はクラウドに、体はあらゆるところに。"*
 
-## 📄 ライセンス
-
-MIT
+</div>
