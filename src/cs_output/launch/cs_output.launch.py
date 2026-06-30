@@ -41,6 +41,7 @@ def generate_launch_description():
     topic_output_arg = DeclareLaunchArgument('topic_output', default_value='raw_message')
     repo_dir_arg = DeclareLaunchArgument('repo_dir', default_value='')
     max_results_arg = DeclareLaunchArgument('max_results', default_value='10')
+    max_size_mb_arg = DeclareLaunchArgument('max_size_mb', default_value='5')
 
     agent_name = LaunchConfiguration('agent_name')
     info_timeout = LaunchConfiguration('info_timeout')
@@ -52,6 +53,7 @@ def generate_launch_description():
     topic_output = LaunchConfiguration('topic_output')
     repo_dir = LaunchConfiguration('repo_dir')
     max_results = LaunchConfiguration('max_results')
+    max_size_mb = LaunchConfiguration('max_size_mb')
 
     # 节点定义
     output_mgmt = Node(
@@ -126,6 +128,20 @@ def generate_launch_description():
         output='screen',
     )
 
+    web_fetch = Node(
+        package='cs_output',
+        executable='web_fetch_node',
+        name='web_fetch_node',
+        parameters=[{
+            'agent_name': agent_name,
+            'info_rate': info_rate,
+            'default_timeout': default_timeout,
+            'max_size_mb': max_size_mb,
+        }],
+        emulate_tty=True,
+        output='screen',
+    )
+
     message_send = Node(
         package='cs_output',
         executable='message_send_node',
@@ -151,10 +167,12 @@ def generate_launch_description():
         topic_output_arg,
         repo_dir_arg,
         max_results_arg,
+        max_size_mb_arg,
         output_mgmt,
         file_rdwt,
         shell_exec,
         message_send,
         skills_loader,
         web_search,
+        web_fetch,
     ])

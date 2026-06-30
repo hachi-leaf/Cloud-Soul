@@ -44,7 +44,10 @@ public:
         }
 
         std::string topic = "/" + agent_name_ + "/output/skills_loader/info";
-        info_pub_ = create_publisher<std_msgs::msg::String>(topic, 10);
+        rclcpp::QoS qos(1);
+        qos.transient_local();
+        qos.reliable();
+        info_pub_ = create_publisher<std_msgs::msg::String>(topic, qos);
         info_timer_ = create_wall_timer(
             std::chrono::milliseconds(static_cast<int>(1000.0 / info_rate_)),
             [this]() {
@@ -103,7 +106,7 @@ private:
         })");
 
         fs::path skills_dir = fs::path(repo_dir_) / "skills";
-        std::string desc = "按需加载技能（Skill）。可用技能：\\n";
+        std::string desc = "按需加载技能（Skill）。可用技能：\n";
         if (fs::exists(skills_dir) && fs::is_directory(skills_dir)) {
             bool found = false;
             for (const auto& entry : fs::directory_iterator(skills_dir)) {
@@ -116,12 +119,12 @@ private:
                 if (fm.contains("description") && !fm["description"].get<std::string>().empty()) {
                     desc += ": " + fm["description"].get<std::string>();
                 }
-                desc += "\\n";
+                desc += "\n";
                 found = true;
             }
-            if (!found) desc += "(无)\\n";
+            if (!found) desc += "(无)\n";
         } else {
-            desc += "(skills 目录不存在)\\n";
+            desc += "(skills 目录不存在)\n";
         }
         desc += "用 load 加载完整内容，用 list 重新列出。";
         info["function"]["description"] = desc;
