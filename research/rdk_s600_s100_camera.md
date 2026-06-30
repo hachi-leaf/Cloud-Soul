@@ -90,3 +90,7 @@ GMSL 参数: -l link_port (0:A 1:B 2:C 3:D), -m mipi_rx (MIPI host 1/2)
 - 10GbE 需固件下载才有万兆性能
 - NVMe 启动不支持休眠唤醒
 - V1P0 硬件版本
+
+## 社区项目
+- ros2-patrol-robot (wangshichen0506): ROS2停车巡检机器人, 适配S100
+- HeyRobotModelApis (sunshineharry): S600端侧OpenAI兼容API (Qwen3-VL-8B + whisper-medium)
