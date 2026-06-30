@@ -23,6 +23,8 @@ set(EXECUTABLE_LIST
   # file_write_node     src/file_write_node.cpp
   file_rdwt_node      src/file_rdwt_node.cpp
   message_send_node   src/message_send_node.cpp
+  skills_loader_node  src/skills_loader_node.cpp
+  web_search_node    src/web_search_node.cpp
 )
 
 # 批量创建可执行文件
