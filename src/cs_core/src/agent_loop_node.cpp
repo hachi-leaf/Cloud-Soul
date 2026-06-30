@@ -115,6 +115,12 @@ public:
                     recent_msgs.push_back(msg_history_[i]);
                 }
 
+
+                // 去掉 recent_msgs 开头连续的 tool 消息，避免 LLM 报错
+                // （tool 消息必须以 assistant(tool_calls) 开头，否则违反 API 规范）
+                while (!recent_msgs.empty() && recent_msgs[0].value("role", "") == "tool") {
+                    recent_msgs.erase(recent_msgs.begin());
+                }
                 while (rclcpp::ok()) {
                     save_current_json();
                     auto archive_req = std::make_shared<MemoryArchive::Request>();
@@ -527,7 +533,7 @@ private:
                     tool_name.c_str(), exit_code, raw_output.substr(0, 200).c_str());
 
         std::stringstream ss;
-        ss << "[tool results] " << raw_output;
+        ss << raw_output;
 
         std::string content_str = ss.str();
         if (content_str.empty()) content_str = "[no output]";

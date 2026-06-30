@@ -138,13 +138,30 @@ cd Cloud-Soul && colcon build --symlink-install
 
 > `input_mgmt_node` and `output_mgmt_node` handle the rest.
 
+
+---
+
+## 📝 Release Notes
+
+### v0.3.6-Beta (2026-06-30)
+
+**output_mgmt + output nodes 完整重构**
+
+- **output_mgmt_node**: 重写为通用反射层。自动发现 `/agent_name/output/*/info` 话题，解析工具 schema JSON，注册 Action 客户端，运行时转发 tool_calls 到对应节点并回传结果。支持优雅退出 `cancel_all_goals()`。
+- **shell_exec_node**: 迁移到 actionlib 并使用新统一协议。支持 `kill_and_wait`(先 SIGTERM 后 SIGKILL)、超时控制、`max_output_lines` 限制。
+- **file_rdwt_node**: 迁移到 actionlib 并使用新统一协议。支持 read/write/append/insert/read_write 操作、行范围读取、UTF-8 sanitize。
+- **message_send_node**: 迁移到 actionlib 并使用新统一协议。支持 email(s-nail)/ros_msg/web_chat 三渠道，TLS 超时自适应。
+- **协议统一**: 所有 output 节点使用 `{"name":"tool","arguments":{...}}` 格式。validate_args 函数确保必填字段校验。
+- **agent_loop_node**: 修复记忆压缩后首个保留消息为 tool 角色导致的 LLM 错误，添加 leading tool 消息剥离逻辑。
+- **cs_interfaces**: 新增 `ToolCall.action` (`name`, `arguments`, `result`, `error`)，替代旧的独立 action 定义。
+
 ---
 
 ## 📊 Status
 
 | Metric | Value |
 |--------|-------|
-| Latest | `v0.3.3-Beta` |
+| Latest | `v0.3.6-Beta` |
 | Packages | 4 (`cs_core` `cs_input` `cs_output` `cs_interfaces`) |
 | Tools | 3 (`shell_exec` `file_rdwt` `message_send`) |
 | Sensors | 3 (`system_status` `message_receive` `ros_msg`) |

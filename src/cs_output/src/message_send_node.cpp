@@ -9,7 +9,7 @@
 //  <string>agent_name       --> Agent 名
 //  <float64>info_rate       --> 发布 Tools Info 的频率（Hz）
 //  <string>topic_output     --> ros_msg 渠道发布的话题名，默认 "raw_message"
-//  <float64>default_timeout --> 消息发送超时（秒），当 LLM 未传 timeout_sec 时使用，默认 30.0
+//  <float64>default_timeout --> 默认状态下（Agent 将 Action 的 Goal 的 timeout_sec 设为 0 时）Action 的 timeout
 
 // Topic: /<agent_name>/output/message_send/info
 // Struct:
@@ -26,6 +26,7 @@
 // Action: /<agent_name>/output/message_send
 // Struct:
 //  Goal <string>input_json      --> LLM 输出的 tools_call json 字段，由 MESSAGE_SEND_INFO_JSON 约束
+//  Goal <float64>timeout_sec    --> Action 调用超时时间（秒），0 表示使用 default_timeout
 //  ---
 //  Results <string>output_json  --> 返回给 LLM tools_callback 字段，为自由字符串
 //  Results <int32>exit_code     --> 错误码，0 为成功，-1 为错误
@@ -66,7 +67,7 @@
 //  <string>agent_name       --> Agent 名
 //  <float64>info_rate       --> 发布 Tools Info 的频率（Hz）
 //  <string>topic_output     --> ros_msg 渠道发布的话题名，默认 "raw_message"
-//  <float64>default_timeout --> 消息发送超时（秒），当 LLM 未传 timeout_sec 时使用，默认 30.0
+//  <float64>default_timeout --> 默认状态下（Agent 将 Action 的 Goal 的 timeout_sec 设为 0 时）Action 的 timeout
 
 // Topic: /<agent_name>/output/message_send/info
 // Struct:
@@ -75,6 +76,7 @@
 // Action: /<agent_name>/output/message_send
 // Struct:
 //  Goal <string>input_json      --> LLM 输出的 tools_call json 字段，由 MESSAGE_SEND_INFO_JSON 约束
+//  Goal <float64>timeout_sec    --> Action 调用超时时间（秒），0 表示使用 default_timeout
 //  ---
 //  Results <string>output_json  --> 返回给 LLM tools_callback 字段，为自由字符串
 //  Results <int32>exit_code     --> 错误码，0 为成功，-1 为错误
@@ -293,13 +295,13 @@ private:
       const auto goal = goal_handle->get_goal();
 
       // 解析 JSON，带修复
-      json args;
+      json raw;
       try {
-        args = json::parse(goal->input_json);
+        raw = json::parse(goal->input_json);
       } catch (const json::parse_error &) {
         std::string fixed = repair_json(goal->input_json);
         try {
-          args = json::parse(fixed);
+          raw = json::parse(fixed);
           RCLCPP_INFO(this->get_logger(), "JSON 自动修复成功");
         } catch (const std::exception &) {
           result->output_json = R"({"error":"invalid input"})";
@@ -313,6 +315,7 @@ private:
         }
       }
 
+      json args = raw.contains("arguments") && raw["arguments"].is_object() ? raw["arguments"] : json::object();
       if (!args.contains("channel") || !args["channel"].is_string()) {
         result->output_json = R"({"error":"invalid input: channel is required"})";
         result->exit_code = -1;
@@ -327,13 +330,6 @@ private:
 
       // 计算超时截止时间（使用整数秒 duration）
       double timeout = default_timeout_;
-      try {
-        json input = json::parse(goal->input_json);
-        if (input.contains("timeout_sec") && input["timeout_sec"].is_number()) {
-          double ts = input["timeout_sec"].get<double>();
-          if (ts > 0.0) timeout = ts;
-        }
-      } catch (...) {}
       auto deadline = std::chrono::steady_clock::now() +
                       std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                           std::chrono::duration<double>(timeout));
@@ -371,13 +367,6 @@ private:
                     std::chrono::steady_clock::time_point deadline) {
     const auto goal = goal_handle->get_goal();
     double timeout = default_timeout_;
-      try {
-        json input = json::parse(goal->input_json);
-        if (input.contains("timeout_sec") && input["timeout_sec"].is_number()) {
-          double ts = input["timeout_sec"].get<double>();
-          if (ts > 0.0) timeout = ts;
-        }
-      } catch (...) {}
 
     if (system("command -v s-nail > /dev/null 2>&1") != 0) {
       result->output_json = R"({"error":"s-nail not available"})";
@@ -460,13 +449,6 @@ private:
                       std::chrono::steady_clock::time_point deadline) {
     const auto goal = goal_handle->get_goal();
     double timeout = default_timeout_;
-      try {
-        json input = json::parse(goal->input_json);
-        if (input.contains("timeout_sec") && input["timeout_sec"].is_number()) {
-          double ts = input["timeout_sec"].get<double>();
-          if (ts > 0.0) timeout = ts;
-        }
-      } catch (...) {}
 
     if (std::chrono::steady_clock::now() > deadline) {
       result->output_json = R"({"error":"timed out after )" + std::to_string(timeout) + "s\"}";
@@ -511,13 +493,6 @@ private:
                        std::chrono::steady_clock::time_point deadline) {
     const auto goal = goal_handle->get_goal();
     double timeout = default_timeout_;
-      try {
-        json input = json::parse(goal->input_json);
-        if (input.contains("timeout_sec") && input["timeout_sec"].is_number()) {
-          double ts = input["timeout_sec"].get<double>();
-          if (ts > 0.0) timeout = ts;
-        }
-      } catch (...) {}
 
     if (std::chrono::steady_clock::now() > deadline) {
       result->output_json = R"({"error":"timed out after )" + std::to_string(timeout) + "s\"}";

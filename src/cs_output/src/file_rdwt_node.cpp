@@ -1,60 +1,56 @@
 // Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 
-// Cloud-Soul 标准 output 工具节点：文件读写 
-// unified file read/write tool for Cloud-Soul
+// ================================================================
+// Cloud-Soul 文件读写工具节点
+// ================================================================
+//
+// 作用:
+//   安全的文件读写工具。支持读取（可按行范围）、覆盖写入、追加写入、
+//   按行插入、写后读回验证。
+//
+// 节点名: /<agent_name>/file_rdwt_node
+//
+// 参数:
+//   agent_name       (string, 必填)   Agent 命名空间
+//   info_rate         (double, 1.0)   发布 Tools Info 的频率（Hz）
+//   default_timeout   (double, 30.0)  文件操作默认超时秒数 (DEFAULT_TIMEOUT)
+//
+// Action:
+//   /<agent_name>/output/file_rdwt  (ExecuteTool)
+//     Goal: 接收 {"name":"file_rdwt","arguments":{"action":...,"path":...}}
+//     Result: output_json 为自由字符串
+//     Cancel: 终止正在进行的读写操作
+//
+// 上层传入 JSON 规范 (来自 output_mgmt):
+//   {
+//     "name": "file_rdwt",
+//     "arguments": {
+//       "action": "read|write|read_write",
+//       "path": "/absolute/path",
+//       "content": "...",       // write/read_write 必填
+//       "mode": "overwrite|append|insert",
+//       "range": {"start_line":1,"end_line":10}
+//     }
+//   }
+//
+// 关键设计:
+//   - 从 arguments 子对象提取参数
+//   - 无需并行保护（output_mgmt 通过 busy 标志保证）
+//   - 分块读写，每块检查 cancel/timeout 以实现可中断
+//   - path 必须是绝对路径，不含 ..
+//
 
-// Node: /<agent_name>/file_rdwt_node
-// Param:
-//  <string>agent_name       --> Agent 名
-//  <float64>info_rate       --> 发布 Tools Info 的频率（Hz）
-//  <float64>default_timeout --> 文件操作超时（秒），当 LLM 未传 timeout_sec 时使用，默认 30.0
+// file_rdwt_node_pre.cpp
 
-// Topic: /<agent_name>/output/file_rdwt/info
-// Struct:
-//  <string>info --> 输入给 LLM 的 tools json 字段，见 FILE_RDWT_INFO_JSON
-
-// Action: /<agent_name>/output/file_rdwt
-// Struct:
-//  Goal <string>input_json      --> LLM 输出的 tools_call json 字段，由 FILE_RDWT_INFO_JSON 约束
-//  ---
-//  Results <string>output_json  --> 返回给 LLM tools_callback 字段，为自由字符串
-//  Results <int32>exit_code     --> 错误码，0 为成功，其他值为 Error
-//  ---
-//  Feedback <string>status      --> reserved
-
-// Action 特性：
-//  1. 禁止并行，并行时直接对新 Goal 返回 exit_code = -1, output_json = {"error":"Another goal is already running"}
-//  2. 读超时: exit_code = -1, output_json = {"error":"timed out after Xs while reading"}（X 为 timeout 秒数）
-//  3. 写超时: exit_code = -1, output_json = {"error":"timed out after Xs, Y bytes written"}（X 同超时，Y 为已写入字节数）
-//  4. 写后读超时: 若超时发生在写阶段同 3，发生在读阶段同 2，整体共享同一个超时
-//  5. 所有输入校验失败 (action/path/mode/content/range) 均返回 exit_code = -1, output_json = {"error":"..."}，错误原因包括：
-//     - "unknown action: …"
-//     - "path is required" / "path must be absolute" / "path contains .. (rejected for safety)" / "path is a directory"
-//     - "unknown mode: …"
-//     - "content is required"
-//     - "start_line must be >= 1" / "end_line < start_line"
-//     - "insert mode requires range.start_line"
-//  6. 文件不存在时：读返回 {"error":"file not found"}；写自动创建后正常写入
-//  7. 系统错误（无权限、磁盘满等）返回对应错误，exit_code = -1，例如：
-//     - "cannot open for writing: …" / "cannot open for reading: …" / "cannot open for reading (insert prepare): …"
-//     - "write failed at byte N"
-//  8. 用户主动 Cancel 返回 exit_code = -1, output_json = {"error":"canceled by user"}
-//  9. 输入 JSON 格式错误时自动尝试修复（去尾逗号、补全括号等），修复仍失败则返回 exit_code = -1, output_json = {"error":"invalid JSON: …"}
-// 10. 成功返回 exit_code = 0：
-//     - 读：output_json = {"exit_code":0,"content":"...","size":N}
-//     - 写：output_json = {"exit_code":0,"written":N}
-//     - 读写：output_json = {"exit_code":0,"content":"...","size":N,"written":N}
-// 11. range 越界自动 clamp（不报错）；insert 超出文件行数时退化为追加（等效 append）
-
-#include <fstream>
-#include <thread>
-#include <chrono>
 #include <atomic>
-#include <map>
+#include <chrono>
+#include <fstream>
+#include <memory>
+#include <string>
+#include <thread>
 #include <vector>
 #include <filesystem>
-#include <mutex>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -64,14 +60,9 @@
 
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
-
 using ExecuteTool = cs_interfaces::action::ExecuteTool;
-using GoalHandle = rclcpp_action::ServerGoalHandle<ExecuteTool>;
 using json = nlohmann::json;
 
-// ================================================================
-// Tool Description (DeepSeek/OpenAI function-calling compatible)
-// ================================================================
 static constexpr const char* FILE_RDWT_INFO_JSON = R"json({
   "type": "function",
   "function": {
@@ -114,16 +105,16 @@ static constexpr const char* FILE_RDWT_INFO_JSON = R"json({
               "description": "结束行号。设为 -1 表示读到末尾。必须 ≥ start_line"
             }
           }
+        },
+        "timeout_sec": {
+          "type": "number",
+          "description": "文件操作超时时间（秒）。默认 60 秒。设 0 使用默认值。建议长时间任务设置合理超时，避免 Agent 挂起。"
         }
       }
     }
   }
 })json";
 
-
-// ================================================================
-// Utility: build error result
-// ================================================================
 static json make_error(const std::string& msg) {
     return {{"error", msg}};
 }
@@ -241,72 +232,45 @@ static std::string content_insert(const std::string& original,
 // ================================================================
 // Main node
 // ================================================================
+
+// ================================================================
+// FileRdwtNode
+// ================================================================
 class FileRdwtNode : public rclcpp::Node {
 public:
-    explicit FileRdwtNode(const std::string& agent_name)
+    FileRdwtNode(const std::string& agent_name)
         : Node("file_rdwt_node", agent_name), agent_name_(agent_name)
     {
         declare_parameter("agent_name", agent_name);
         declare_parameter("info_rate", 1.0);
-        declare_parameter("default_timeout", 30.0);
+        declare_parameter("default_timeout", DEFAULT_TIMEOUT);
 
-        double info_rate = get_parameter("info_rate").as_double();
         default_timeout_ = get_parameter("default_timeout").as_double();
 
-        std::string ns = "/" + agent_name_;
-
-        // ---- Action Server ----
+        // Action Server
         action_server_ = rclcpp_action::create_server<ExecuteTool>(
-            this, ns + "/output/file_rdwt",
-            // handle_goal
+            this, "/" + agent_name_ + "/output/file_rdwt",
             [](auto...) { return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE; },
-            // handle_cancel
-            [this](const std::shared_ptr<GoalHandle> gh) {
-                std::lock_guard<std::mutex> lock(active_mutex_);
-                auto it = active_.find(gh->get_goal_id());
-                if (it != active_.end()) {
-                    it->second->canceled.store(true);
-                    RCLCPP_INFO(get_logger(), "Cancel requested");
-                }
-                return rclcpp_action::CancelResponse::ACCEPT;
-            },
-            // handle_accepted
-            [this](const std::shared_ptr<GoalHandle> gh) {
-                std::shared_ptr<ExecState> st;
-                {
-                    std::lock_guard<std::mutex> lock(active_mutex_);
-                    if (!active_.empty()) {
-                        auto result = std::make_shared<ExecuteTool::Result>();
-                        result->output_json = make_error("Another goal is already running").dump();
-                        result->exit_code = -1;
-                        gh->abort(result);
-                        RCLCPP_WARN(get_logger(), "Rejected new goal: another goal is active");
-                        return;
-                    }
-                    st = std::make_shared<ExecState>();
-                    st->canceled.store(false);
-                    active_[gh->get_goal_id()] = st;
-                }
-                std::thread{std::bind(&FileRdwtNode::execute, this, gh, st)}.detach();
-            }
-        );
+            [this](auto gh) { return handle_cancel(gh); },
+            [this](auto gh) { handle_accepted(gh); });
 
-        // ---- Info publisher ----
+        // Info 发布
         rclcpp::QoS qos(1);
         qos.transient_local(); qos.reliable();
         info_pub_ = create_publisher<std_msgs::msg::String>(
-            ns + "/output/file_rdwt/info", qos);
+            "/" + agent_name_ + "/output/file_rdwt/info", qos);
 
+        double info_rate = get_parameter("info_rate").as_double();
         publish_timer_ = create_wall_timer(
             std::chrono::duration<double>(1.0 / info_rate),
-            [this]{ publish_info(); });
+            [this]() { publish_info(); });
         publish_info();
 
-        RCLCPP_INFO(get_logger(), "file_rdwt_node started for %s", agent_name_.c_str());
+        RCLCPP_INFO(get_logger(), "file_rdwt_node started");
     }
 
 private:
-    struct ExecState { std::atomic<bool> canceled{false}; };
+    static constexpr double DEFAULT_TIMEOUT = 30.0;
 
     void publish_info() {
         std_msgs::msg::String msg;
@@ -314,46 +278,101 @@ private:
         info_pub_->publish(msg);
     }
 
-    void execute(const std::shared_ptr<GoalHandle> gh,
-                 std::shared_ptr<ExecState> st) {
-        auto result = std::make_shared<ExecuteTool::Result>();
-        const auto goal = gh->get_goal();
+    rclcpp_action::CancelResponse handle_cancel(
+        const std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> goal_handle)
+    {
+        (void)goal_handle;
+        RCLCPP_INFO(get_logger(), "handle_cancel: Cancel requested");
+        canceled_.store(true);
+        return rclcpp_action::CancelResponse::ACCEPT;
+    }
 
-        // ---- Parse input JSON (defensive: auto-repair on failure) ----
-        json args;
+    void handle_accepted(
+        const std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> goal_handle)
+    {
+        const auto goal = goal_handle->get_goal();
+
+        // 1. 解析 JSON
+        json input;
         try {
-            args = json::parse(goal->input_json);
-        } catch (const json::parse_error& e) {
-            std::string fixed = repair_json(goal->input_json);
-            try {
-                args = json::parse(fixed);
-                RCLCPP_INFO(get_logger(), "JSON auto-repaired");
-            } catch (const json::parse_error& e2) {
-                result->output_json = make_error(
-                    "invalid JSON: " + std::string(e.what())).dump();
-                result->exit_code = -1;
-                gh->abort(result);
-                {
-                    std::lock_guard<std::mutex> lock(active_mutex_);
-                    active_.erase(gh->get_goal_id());
-                }
-                return;
-            }
+            input = json::parse(goal->input_json);
+        } catch (...) {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Failed to parse input JSON");
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: failed to parse JSON"})";
+            goal_handle->abort(result);
+            return;
         }
 
-        // ---- Timeout ----
-        double timeout = default_timeout_;
-      try {
+        // 2. 校验 tool name
+        if (!input.contains("name") || !input["name"].is_string() ||
+            input["name"].get<std::string>() != "file_rdwt") {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Invalid or mismatched tool name");
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: bad tool name"})";
+            goal_handle->abort(result);
+            return;
+        }
+
+        // 3. 校验 arguments
+        if (!input.contains("arguments") || !input["arguments"].is_object()) {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Missing arguments");
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: missing arguments"})";
+            goal_handle->abort(result);
+            return;
+        }
+
+        auto& args = input["arguments"];
+
+        // 4. 校验 action
+        if (!args.contains("action") || !args["action"].is_string()) {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Missing action");
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: action is required"})";
+            goal_handle->abort(result);
+            return;
+        }
+        std::string action = args["action"].get<std::string>();
+        if (action != "read" && action != "write" && action != "read_write") {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Unknown action: %s", action.c_str());
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: unknown action"})";
+            goal_handle->abort(result);
+            return;
+        }
+
+        // 5. 校验 path
+        if (!args.contains("path") || !args["path"].is_string()) {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Missing path");
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: path is required"})";
+            goal_handle->abort(result);
+            return;
+        }
+        std::string path = args["path"].get<std::string>();
+        if (path.empty() || path[0] != '/') {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Path must be absolute: %s", path.c_str());
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: path must be absolute"})";
+            goal_handle->abort(result);
+            return;
+        }
+
+        // 启动执行线程
+        canceled_.store(false);
+        std::thread{[this, goal_handle]() { execute(goal_handle); }}.detach();
+    }
+
+    void execute(
+        const std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> goal_handle)
+    {
+        auto result = std::make_shared<ExecuteTool::Result>();
+        const auto goal = goal_handle->get_goal();
         json input = json::parse(goal->input_json);
-        if (input.contains("timeout_sec") && input["timeout_sec"].is_number()) {
-          double ts = input["timeout_sec"].get<double>();
-          if (ts > 0.0) timeout = ts;
-        }
-      } catch (...) {}
-        auto deadline = std::chrono::steady_clock::now()
-            + std::chrono::duration<double>(timeout);
+        auto& args = input["arguments"];
 
-        // ---- Extract fields ----
+        // 提取参数
         std::string action  = args.value("action", "");
         std::string path    = args.value("path", "");
         std::string content = args.value("content", "");
@@ -366,72 +385,65 @@ private:
             if (r.contains("end_line"))   end_line   = r["end_line"].get<int64_t>();
         }
 
-        // ---- Validation ----
+        // 超时
+        double timeout = default_timeout_;
+        if (args.contains("timeout_sec") && args["timeout_sec"].is_number()) {
+            double ts = args["timeout_sec"].get<double>();
+            if (ts > 0.0) timeout = ts;
+        }
+        auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(timeout));
+
+        // 辅助: 失败返回
         auto fail = [&](const std::string& msg) {
+            RCLCPP_ERROR(get_logger(), "execute: %s", msg.c_str());
             result->output_json = make_error(msg).dump();
-            result->exit_code = -1;
-            gh->abort(result);
-            {
-                std::lock_guard<std::mutex> lock(active_mutex_);
-                active_.erase(gh->get_goal_id());
-            }
+            goal_handle->abort(result);
         };
 
-        if (path.empty())                    return fail("path is required");
-        if (path[0] != '/')                  return fail("path must be absolute");
+        // 二次校验（path 安全性等）
         if (path.find("..") != std::string::npos)
-                                             return fail("path contains .. (rejected for safety)");
+            return fail("path contains .. (rejected for safety)");
         if (fs::exists(path) && fs::is_directory(path))
-                                             return fail("path is a directory");
-        if (action != "read" && action != "write" && action != "read_write")
-            return fail("unknown action: " + action + ", expected read|write|read_write");
+            return fail("path is a directory");
 
         bool is_read  = (action == "read" || action == "read_write");
         bool is_write = (action == "write" || action == "read_write");
 
         if (is_write) {
             if (mode != "overwrite" && mode != "append" && mode != "insert")
-
-                return fail("unknown mode: " + mode + ", expected overwrite|append|insert");
+                return fail("unknown mode: " + mode);
             if (content.empty())
                 return fail("content is required");
         }
-
         if (start_line != -1 && start_line < 1)
             return fail("start_line must be >= 1");
         if (start_line != -1 && end_line != -1 && end_line < start_line)
             return fail("end_line < start_line");
 
-        // ---- Timeout check helper ----
-        auto timed_out = [&]() -> bool {
-            return std::chrono::steady_clock::now() > deadline;
-        };
+        auto timed_out = [&]() { return std::chrono::steady_clock::now() > deadline; };
 
         // ---- Write ----
         int64_t written = 0;
         if (is_write) {
-            // compute effective mode for insert with start_line
             if (mode == "insert" && (!args.contains("range") || !args["range"].contains("start_line")))
                 return fail("insert mode requires range.start_line");
-            std::string eff_mode = mode;
 
-            // For insert: read existing content, modify, write back
+            std::string eff_mode = mode;
             if (mode == "insert" && fs::exists(path)) {
+                // 退出原因: insert 需要先读原文件再写回
                 std::ifstream ifs(path, std::ios::binary);
                 if (!ifs.is_open())
                     return fail("cannot open for reading (insert prepare): " + path);
                 std::string existing((std::istreambuf_iterator<char>(ifs)),
                                      std::istreambuf_iterator<char>());
                 ifs.close();
-                int64_t target_line = (start_line > 0) ? start_line : 1;
-                std::string combined = content_insert(existing, content, target_line);
-                content = combined;
-                eff_mode = "overwrite";  // write the combined result
+                content = content_insert(existing, content, (start_line > 0) ? start_line : 1);
+                eff_mode = "overwrite";
             }
 
             std::ios::openmode om = std::ios::binary;
-
-            // insert mode requires range.start_line
             if (eff_mode == "append" && fs::exists(path))
                 om |= std::ios::app;
             else
@@ -441,15 +453,20 @@ private:
             if (!ofs.is_open())
                 return fail("cannot open for writing: " + path);
 
-            // chunked write with cancel/timeout checks
+            // 分块写入，每块检查 cancel/timeout
             constexpr size_t CHUNK = 4096;
             size_t pos = 0;
             while (pos < content.size()) {
-                if (st->canceled.load())
+                // 退出原因: 写入期间被取消
+                if (canceled_.load())
                     return fail("canceled by user");
-                if (timed_out())
-                    return fail("timed out after " + std::to_string(timeout)
-                        + "s, " + std::to_string(pos) + " bytes written");
+                // 退出原因: 写入超时
+                if (timed_out()) {
+                    json err;
+                    err["error"] = "timed out after " + std::to_string(timeout) + "s, "
+                        + std::to_string(pos) + " bytes written";
+                    return fail(err.dump());
+                }
                 size_t n = std::min(CHUNK, content.size() - pos);
                 ofs.write(content.data() + pos, n);
                 if (ofs.fail())
@@ -464,6 +481,7 @@ private:
         std::string read_content;
         int64_t read_size = 0;
         if (is_read) {
+            // 退出原因: 文件不存在
             if (!fs::exists(path))
                 return fail("file not found: " + path);
 
@@ -473,24 +491,23 @@ private:
 
             constexpr size_t READ_CHUNK = 4096;
             std::string raw;
-            raw.reserve(4096);          // 可调，避免频繁重分配
             char buf[READ_CHUNK];
             while (ifs) {
-                if (st->canceled.load())
+                // 退出原因: 读取期间被取消
+                if (canceled_.load())
                     return fail("canceled by user");
+                // 退出原因: 读取超时
                 if (timed_out())
                     return fail("timed out after " + std::to_string(timeout) + "s while reading");
                 ifs.read(buf, READ_CHUNK);
                 std::streamsize n = ifs.gcount();
-                if (n > 0)
-                    raw.append(buf, n);
-                else
-                    break;  // EOF or error
+                if (n > 0) raw.append(buf, n);
+                else break;
             }
             ifs.close();
 
-            // 读取完成后再取消也要报（与写入逻辑对称）
-            if (st->canceled.load())
+            // 退出原因: 读取完成后被取消
+            if (canceled_.load())
                 return fail("canceled by user");
 
             if (start_line > 0 || end_line > 0) {
@@ -503,47 +520,39 @@ private:
             read_size = static_cast<int64_t>(read_content.size());
         }
 
-        // ---- Build result ----
-        if (st->canceled.load()) {
-            result->output_json = make_error("canceled by user").dump();
-            result->exit_code = -1;
-        } else {
-            json out;
-            out["exit_code"] = 0;
-            if (is_read) {
-                out["content"] = read_content;
-                out["size"] = read_size;
-            }
-            if (is_write) {
-                out["written"] = written;
-            }
-            result->output_json = out.dump();
-            result->exit_code = 0;
+        // ---- 组装成功结果 ----
+        // 正常退出: 读写操作成功完成
+        json out;
+        out["exit_code"] = 0;
+        if (is_read) {
+            out["content"] = read_content;
+            out["size"] = read_size;
         }
-
-        gh->succeed(result);
-        {
-            std::lock_guard<std::mutex> lock(active_mutex_);
-            active_.erase(gh->get_goal_id());
+        if (is_write) {
+            out["written"] = written;
         }
+        result->output_json = out.dump();
+        RCLCPP_INFO(get_logger(), "execute: Completed, action=%s, path=%s, read=%ld, written=%ld",
+                    action.c_str(), path.c_str(), read_size, written);
+        goal_handle->succeed(result);
     }
 
+    // ========== 成员变量 ==========
     std::string agent_name_;
-    double default_timeout_ = 60.0;
-    rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
+    double default_timeout_ = DEFAULT_TIMEOUT;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr info_pub_;
+    rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
     rclcpp::TimerBase::SharedPtr publish_timer_;
-    std::mutex active_mutex_;
-    std::map<rclcpp_action::GoalUUID, std::shared_ptr<ExecState>> active_;
+    std::atomic<bool> canceled_{false};
 };
 
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     auto temp = std::make_shared<rclcpp::Node>("temp");
-    temp->declare_parameter("agent_name", "agent");
-    std::string an = temp->get_parameter("agent_name").as_string();
+    temp->declare_parameter<std::string>("agent_name", "agent");
+    std::string agent_name = temp->get_parameter("agent_name").as_string();
     temp.reset();
-    auto node = std::make_shared<FileRdwtNode>(an);
+    auto node = std::make_shared<FileRdwtNode>(agent_name);
     rclcpp::spin(node);
     rclcpp::shutdown();
     return 0;

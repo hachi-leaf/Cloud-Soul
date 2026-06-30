@@ -1,57 +1,62 @@
 // Copyright (c) leaf
 // SPDX-License-Identifier: MIT
 
-// Cloud-Soul 标准 output 工具节点：Shell 命令执行
-// shell command execution tool for Cloud-Soul
+// ================================================================
+// Cloud-Soul Shell 命令执行工具节点
+// ================================================================
+//
+// 作用:
+//   在子进程中执行 Shell 命令，捕获全部 stdout/stderr 并返回。
+//   支持多行脚本。命令以非交互方式运行（stdin 已关闭）。
+//
+// 节点名: /<agent_name>/shell_exec_node
+//
+// 参数:
+//   agent_name       (string, 必填)  Agent 命名空间
+//   info_rate         (double, 1.0)  发布 Tools Info 的频率（Hz）
+//   default_timeout   (double, 30.0)  命令执行默认超时秒数 (DEFAULT_TIMEOUT)
+//
+// Action:
+//   /<agent_name>/output/shell_exec  (ExecuteTool)
+//     Goal: 接收 {"name":"shell_exec","arguments":{"command":"...","timeout_sec":...}}
+//     Result: output_json 为自由字符串，透传给 LLM
+//     Cancel: 终止正在执行的子进程
+//
+// 上层传入 JSON 规范 (来自 output_mgmt):
+//   output_mgmt 透传以下 JSON 给本节点:
+//   {
+//     "name": "shell_exec",
+//     "arguments": {
+//       "command": "ls -la /tmp",         // 必填，要执行的 Shell 命令
+//       "timeout_sec": 10                  // 可选，超时秒数，不传则用 default_timeout
+//     }
+//   }
+//
+// 关键设计:
+//   - 从 arguments 子对象提取参数（与 output_mgmt 接收格式一致）
+//   - 无需并行保护（output_mgmt 通过 busy 标志保证同一时间只有一个 Goal）
+//   - stdin 关闭（/dev/null），防止交互式命令卡死
+//   - 管道读取非阻塞，防止无输出命令卡死循环
+//   - 超时/取消均用 SIGKILL 终止子进程
+//
 
-// Node: /<agent_name>/shell_exec_node
-// Param:
-//  <string>agent_name       --> Agent 名
-//  <float64>info_rate       --> 发布 Tools Info 的频率（Hz）
-//  <float64>default_timeout --> 命令执行超时（秒），当 LLM 未传 timeout_sec 时使用，默认 30.0
+// shell_exec_node_pre.cpp
 
-// Topic: /<agent_name>/output/shell_exec/info
-// Struct:
-//  <string>info --> 输入给 LLM 的 tools json 字段，见 SHELL_EXEC_INFO_JSON
-
-// Action: /<agent_name>/output/shell_exec
-// Struct:
-//  Goal <string>input_json      --> LLM 输出的 tools_call json 字段，由 SHELL_EXEC_INFO_JSON 约束
-//  ---
-//  Results <string>output_json  --> 返回给 LLM tools_callback 字段，为自由字符串
-//  Results <int32>exit_code     --> 错误码，0 为成功，-1 为错误
-//  ---
-//  Feedback <string>status      --> reserved
-
-// Action 特性：
-//  1. 禁止并行，并行时直接对新 Goal 返回 exit_code = -1, output_json = {"error":"Another goal is already running"}
-//  2. 输入校验失败（command 缺失或为空）→ exit_code = -1, output_json = {"error":"invalid input: command is required"}
-//  3. 系统错误（临时文件创建/写入、管道/fork 失败）→ exit_code = -1, output_json = {"error":"..."}，具体错误描述见代码
-//  4. 命令执行成功（退出码为 0）→ exit_code = 0, output_json = {"stdout":"...","exit_code":0}
-//  5. 命令执行失败（退出码非 0）→ exit_code = -1, output_json = {"stdout":"...","exit_code":<实际退出码>}
-//  6. 命令执行超时（从 input_json.arguments.timeout_sec 读取，未传则用 default_timeout）→ exit_code = -1, output_json = {"error":"timed out after Xs","stdout":"<已捕获>"}
-//  7. 用户主动 Cancel（包括 Ctrl+C 终止节点）→ exit_code = -1, output_json = {"error":"execution canceled","stdout":"<已捕获>"}
-//  8. 子进程 stdin 关闭（重定向到 /dev/null），防止交互式命令卡死；Agent 应将交互式命令转为非交互式写法（如 apt install -y，echo password | sudo -S）
-//  9. 支持多行命令，通过 /bin/sh 执行临时脚本
-// 10. 输入 JSON 格式错误时自动尝试修复（去尾逗号、补全括号等），修复仍失败则返回错误
-// 11. 所有执行路径均保证给客户端终结响应（succeed/abort），包括内部异常
-// 12. 管道读取设为非阻塞，防止无输出命令导致循环卡死
-
-#include <fstream>
-#include <sstream>
-#include <thread>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <sys/wait.h>
-#include <unistd.h>
-#include <signal.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <atomic>
-#include <map>
-#include <mutex>
+#include <fstream>
+#include <sstream>
+#include <thread>
+#include <cstring>
 #include <cerrno>
+#include <atomic>
+#include <memory>
+#include <signal.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -61,8 +66,22 @@
 
 using namespace std::chrono_literals;
 using ExecuteTool = cs_interfaces::action::ExecuteTool;
-using GoalHandleExecute = rclcpp_action::ServerGoalHandle<ExecuteTool>;
 using json = nlohmann::json;
+
+// 轮询间隔：等待子进程输出时的睡眠周期
+static constexpr auto PROCESS_POLL_INTERVAL = std::chrono::milliseconds(100);
+
+// 管道读取缓冲区大小
+static constexpr size_t SHELL_OUTPUT_BUF_SIZE = 4096;
+
+// kill 后等待子进程结束的超时
+static constexpr auto KILL_WAIT_TIMEOUT = std::chrono::seconds(3);
+
+// kill 后轮询 waitpid 的间隔
+static constexpr auto KILL_POLL_INTERVAL = std::chrono::milliseconds(50);
+
+// 命令执行默认超时秒数
+static constexpr double DEFAULT_TIMEOUT = 30.0;
 
 // ================================================================
 // Tool Description (DeepSeek/OpenAI function-calling compatible)
@@ -89,363 +108,323 @@ static constexpr const char* SHELL_EXEC_INFO_JSON = R"json({
   }
 })json";
 
-// 内部常量
-static constexpr size_t SHELL_OUTPUT_BUF_SIZE = 4096;
-static constexpr std::chrono::milliseconds PROCESS_POLL_INTERVAL(100);
-
-// ---------- JSON 修复函数 ----------
-static std::string repair_json(const std::string& raw) {
-    std::string s = raw;
-    size_t p0 = s.find_first_not_of(" \t\n\r");
-    if (p0 == std::string::npos) return s;
-    size_t p1 = s.find_last_not_of(" \t\n\r");
-    s = s.substr(p0, p1 - p0 + 1);
-    std::string r;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == ',' && i + 1 < s.size())
-            if (s[i+1] == '}' || s[i+1] == ']') continue;
-        r += s[i];
-    }
-    s = r;
-    int brace = 0, brack = 0;
-    bool instr = false, esc = false;
-    for (char c : s) {
-        if (esc) { esc = false; continue; }
-        if (c == '\\') { esc = true; continue; }
-        if (c == '"') { instr = !instr; continue; }
-        if (instr) continue;
-        if (c == '{') brace++;
-        if (c == '}') brace--;
-        if (c == '[') brack++;
-        if (c == ']') brack--;
-    }
-    const char closer[] = {'}',']',0};
-    size_t lc = s.find_last_of(closer);
-    if (lc != std::string::npos) {
-        s = s.substr(0, lc + 1);
-        brace = 0; brack = 0; instr = false; esc = false;
-        for (char c : s) {
-            if (esc) { esc = false; continue; }
-            if (c == '\\') { esc = true; continue; }
-            if (c == '"') { instr = !instr; continue; }
-            if (instr) continue;
-            if (c == '{') brace++;
-            if (c == '}') brace--;
-            if (c == '[') brack++;
-            if (c == ']') brack--;
-        }
-    }
-    while (brack > 0) { s += ']'; brack--; }
-    while (brace > 0) { s += '}'; brace--; }
-    return s;
-}
-
+// ================================================================
+// ShellExecNode
+// ================================================================
 class ShellExecNode : public rclcpp::Node {
 public:
-  ShellExecNode(const std::string & agent_name)
-  : Node("shell_exec_node", agent_name), agent_name_(agent_name)
-  {
-    this->declare_parameter<std::string>("agent_name", agent_name);
-    this->declare_parameter<double>("info_rate", 1.0);
-    this->declare_parameter<double>("default_timeout", 30.0);
+    ShellExecNode(const std::string& agent_name)
+        : Node("shell_exec_node", agent_name), agent_name_(agent_name)
+    {
+        // 参数声明
+        declare_parameter("agent_name", agent_name);
+        declare_parameter("info_rate", 1.0);
+        declare_parameter("default_timeout", DEFAULT_TIMEOUT);
 
-    double info_rate = this->get_parameter("info_rate").as_double();
-    default_timeout_ = this->get_parameter("default_timeout").as_double();
+        default_timeout_ = get_parameter("default_timeout").as_double();
 
-    action_server_ = rclcpp_action::create_server<ExecuteTool>(
-      this,
-      "/" + agent_name_ + "/output/shell_exec",
-      [](auto...) { return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE; },
-      // handle_cancel
-      [this](const std::shared_ptr<GoalHandleExecute> goal_handle) {
-        std::lock_guard<std::mutex> lock(active_mutex_);
-        if (auto it = active_goals_.find(goal_handle->get_goal_id());
-            it != active_goals_.end()) {
-          it->second->canceled.store(true);
-          RCLCPP_INFO(this->get_logger(), "收到取消请求");
-        }
-        return rclcpp_action::CancelResponse::ACCEPT;
-      },
-      // handle_accepted
-      [this](auto goal_handle) {
-        {
-          std::lock_guard<std::mutex> lock(active_mutex_);
-          if (!active_goals_.empty()) {
-            auto result = std::make_shared<ExecuteTool::Result>();
-            result->output_json = R"({"error":"Another goal is already running"})";
-            result->exit_code = -1;
-            goal_handle->abort(result);
-            RCLCPP_WARN(this->get_logger(), "拒绝新目标：已有命令在执行");
-            return;
-          }
-          auto exec_state = std::make_shared<ExecutionState>();
-          exec_state->canceled.store(false);
-          active_goals_[goal_handle->get_goal_id()] = exec_state;
-        }
-        std::thread{std::bind(&ShellExecNode::execute, this, goal_handle,
-                              active_goals_[goal_handle->get_goal_id()])}.detach();
-      }
-    );
+        // Action Server
+        action_server_ = rclcpp_action::create_server<ExecuteTool>(
+            this, "/" + agent_name_ + "/output/shell_exec",
+            // handle_goal — 接收 Goal 时触发
+            // 无需并行保护（output_mgmt 保证同一时间只有一个 Goal）
+            [](auto...) { return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE; },
+            // handle_cancel — 客户端请求取消时触发
+            [this](auto goal_handle) { return handle_cancel(goal_handle); },
+            // handle_accepted — Goal 被接受后，启动独立执行线程
+            [this](auto goal_handle) { handle_accepted(goal_handle); });
 
-    rclcpp::QoS qos(1);
-    qos.transient_local();
-    qos.reliable();
-    info_pub_ = this->create_publisher<std_msgs::msg::String>(
-      "/" + agent_name_ + "/output/shell_exec/info", qos);
+        // Info 发布者 + 定时器
+        rclcpp::QoS qos(1);
+        qos.transient_local();
+        qos.reliable();
+        info_pub_ = create_publisher<std_msgs::msg::String>(
+            "/" + agent_name_ + "/output/shell_exec/info", qos);
 
-    publish_timer_ = this->create_wall_timer(
-      std::chrono::duration<double>(1.0 / info_rate),
-      [this]() { publish_info(); });
-    publish_info();
-  }
+        double info_rate = get_parameter("info_rate").as_double();
+        publish_timer_ = create_wall_timer(
+            std::chrono::duration<double>(1.0 / info_rate),
+            [this]() { publish_info(); });
+        publish_info();  // 立即发布一次
+
+        RCLCPP_INFO(get_logger(), "shell_exec_node started");
+    }
 
 private:
-  struct ExecutionState {
-    std::atomic<bool> canceled;
-  };
-
-  void publish_info() {
-    std_msgs::msg::String msg;
-    msg.data = SHELL_EXEC_INFO_JSON;
-    info_pub_->publish(msg);
-  }
-
-  void execute(const std::shared_ptr<GoalHandleExecute> goal_handle,
-               std::shared_ptr<ExecutionState> exec_state) {
-    auto result = std::make_shared<ExecuteTool::Result>();
-
-    try {
-      const auto goal = goal_handle->get_goal();
-
-      std::string command;
-      try {
-        json args = json::parse(goal->input_json);
-        if (!args.contains("command") || !args["command"].is_string())
-          throw std::runtime_error("missing command");
-        command = args["command"].get<std::string>();
-        if (command.empty()) throw std::runtime_error("empty command");
-      } catch (const json::parse_error &) {
-        std::string fixed = repair_json(goal->input_json);
-        try {
-          json args = json::parse(fixed);
-          if (!args.contains("command") || !args["command"].is_string())
-            throw std::runtime_error("missing command");
-          command = args["command"].get<std::string>();
-          if (command.empty()) throw std::runtime_error("empty command");
-          RCLCPP_INFO(this->get_logger(), "JSON 自动修复成功");
-        } catch (const std::exception &) {
-          result->output_json = R"({"error":"invalid input: command is required"})";
-          result->exit_code = -1;
-          goal_handle->abort(result);
-          { std::lock_guard<std::mutex> lock(active_mutex_); active_goals_.erase(goal_handle->get_goal_id()); }
-          return;
-        }
-      } catch (const std::exception &) {
-        result->output_json = R"({"error":"invalid input: command is required"})";
-        result->exit_code = -1;
-        goal_handle->abort(result);
-        { std::lock_guard<std::mutex> lock(active_mutex_); active_goals_.erase(goal_handle->get_goal_id()); }
-        return;
-      }
-
-      double timeout = default_timeout_;
-      try {
-        json input = json::parse(goal->input_json);
-        if (input.contains("timeout_sec") && input["timeout_sec"].is_number()) {
-          double ts = input["timeout_sec"].get<double>();
-          if (ts > 0.0) timeout = ts;
-        }
-      } catch (...) {}
-      auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeout);
-
-      char temp_filename[] = "/tmp/cloudsoul_shell_exec_XXXXXX";
-      int temp_fd = mkstemp(temp_filename);
-      if (temp_fd == -1) {
-        result->output_json = R"({"error":"temporary file creation failed"})";
-        result->exit_code = -1;
-        goal_handle->abort(result);
-        { std::lock_guard<std::mutex> lock(active_mutex_); active_goals_.erase(goal_handle->get_goal_id()); }
-        return;
-      }
-
-      std::string script = "#!/bin/sh\n" + command;
-      if (write(temp_fd, script.c_str(), script.size()) != static_cast<ssize_t>(script.size())) {
-        close(temp_fd); unlink(temp_filename);
-        result->output_json = R"({"error":"failed to write script to temp file"})";
-        result->exit_code = -1;
-        goal_handle->abort(result);
-        { std::lock_guard<std::mutex> lock(active_mutex_); active_goals_.erase(goal_handle->get_goal_id()); }
-        return;
-      }
-      close(temp_fd);
-      chmod(temp_filename, 0700);
-
-      int pipefd[2];
-      if (pipe(pipefd) != 0) {
-        unlink(temp_filename);
-        result->output_json = R"({"error":"pipe creation failed"})";
-        result->exit_code = -1;
-        goal_handle->abort(result);
-        { std::lock_guard<std::mutex> lock(active_mutex_); active_goals_.erase(goal_handle->get_goal_id()); }
-        return;
-      }
-
-      pid_t pid = fork();
-      if (pid == -1) {
-        close(pipefd[0]); close(pipefd[1]); unlink(temp_filename);
-        result->output_json = R"({"error":"fork failed"})";
-        result->exit_code = -1;
-        goal_handle->abort(result);
-        { std::lock_guard<std::mutex> lock(active_mutex_); active_goals_.erase(goal_handle->get_goal_id()); }
-        return;
-      }
-
-      if (pid == 0) {
-        close(pipefd[0]);
-        int nullfd = open("/dev/null", O_RDONLY);
-        if (nullfd >= 0) { dup2(nullfd, STDIN_FILENO); close(nullfd); }
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[1]);
-        execl("/bin/sh", "sh", temp_filename, (char*)nullptr);
-        _exit(127);
-      }
-
-      close(pipefd[1]);
-
-      // 设置读端为非阻塞，防止 read 在无数据时卡死循环
-      int flags = fcntl(pipefd[0], F_GETFL, 0);
-      if (flags != -1) {
-          fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
-      }
-
-      std::string output;
-      char buffer[SHELL_OUTPUT_BUF_SIZE];
-      int child_exit_code = -1;
-      bool canceled = false;
-      bool timed_out = false;
-
-      while (true) {
-        if (exec_state->canceled.load()) {
-          canceled = true;
-          kill(pid, SIGKILL);
-          struct timespec ws, we;
-          clock_gettime(CLOCK_MONOTONIC, &ws);
-          while (true) {
-            pid_t w = waitpid(pid, NULL, WNOHANG);
-            if (w == pid || w == -1) break;
-            clock_gettime(CLOCK_MONOTONIC, &we);
-            double el = (we.tv_sec - ws.tv_sec) + (we.tv_nsec - ws.tv_nsec) / 1e9;
-            if (el > 3.0) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-          }
-          break;
-        }
-
-        if (std::chrono::steady_clock::now() > deadline) {
-          timed_out = true;
-          kill(pid, SIGKILL);
-          struct timespec ws, we;
-          clock_gettime(CLOCK_MONOTONIC, &ws);
-          while (true) {
-            pid_t w = waitpid(pid, NULL, WNOHANG);
-            if (w == pid || w == -1) break;
-            clock_gettime(CLOCK_MONOTONIC, &we);
-            double el = (we.tv_sec - ws.tv_sec) + (we.tv_nsec - ws.tv_nsec) / 1e9;
-            if (el > 3.0) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-          }
-          break;
-        }
-
-        int status;
-        pid_t w = waitpid(pid, &status, WNOHANG);
-        if (w == pid) {
-          ssize_t n;
-          while ((n = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
-            output.append(buffer, n);
-          }
-          if (WIFEXITED(status)) child_exit_code = WEXITSTATUS(status);
-          else if (WIFSIGNALED(status)) child_exit_code = -1;
-          break;
-        }
-
-        ssize_t n = read(pipefd[0], buffer, sizeof(buffer));
-        if (n > 0) {
-          output.append(buffer, n);
-        } else if (n == 0) {
-          // EOF, 子进程可能意外退出但 waitpid 尚未捕获？直接 break
-          break;
-        } else {
-          // n < 0
-          if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            // 非阻塞无数据，正常
-          } else {
-            // 真正的错误，跳出
-            break;
-          }
-        }
-
-        std::this_thread::sleep_for(PROCESS_POLL_INTERVAL);
-      }
-
-      // 确保管道读端关闭
-      close(pipefd[0]);
-      unlink(temp_filename);
-
-      json out;
-      if (canceled) {
-        out["error"] = "execution canceled";
-        out["stdout"] = output;
-        result->exit_code = -1;
-      } else if (timed_out) {
-        out["error"] = "timed out after " + std::to_string(timeout) + "s";
-        out["stdout"] = output;
-        result->exit_code = -1;
-      } else if (child_exit_code == 0) {
-        out["stdout"] = output;
-        out["exit_code"] = 0;
-        result->exit_code = 0;
-      } else {
-        out["stdout"] = output;
-        out["exit_code"] = child_exit_code;
-        result->exit_code = -1;
-      }
-      result->output_json = out.dump();
-      goal_handle->succeed(result);
-    } catch (const std::exception & e) {
-      result->output_json = R"({"error":"internal error: )" + std::string(e.what()) + R"("})";
-      result->exit_code = -1;
-      goal_handle->abort(result);
-    } catch (...) {
-      result->output_json = R"({"error":"internal unknown error"})";
-      result->exit_code = -1;
-      goal_handle->abort(result);
+    // ---------- 发布工具描述 ----------
+    void publish_info() {
+        std_msgs::msg::String msg;
+        msg.data = SHELL_EXEC_INFO_JSON;
+        info_pub_->publish(msg);
     }
 
+    // ---------- 处理取消 ----------
+    // 设置 canceled_ 标志，由 execute() 轮询检测并 kill 子进程
+    rclcpp_action::CancelResponse handle_cancel(
+        const std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> goal_handle)
     {
-      std::lock_guard<std::mutex> lock(active_mutex_);
-      active_goals_.erase(goal_handle->get_goal_id());
+        (void)goal_handle;
+        RCLCPP_INFO(get_logger(), "handle_cancel: Cancel requested, signaling execute to stop");
+        canceled_.store(true);
+        return rclcpp_action::CancelResponse::ACCEPT;
     }
-  }
 
-  std::string agent_name_;
-  double default_timeout_ = 60.0;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr info_pub_;
-  rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
-  rclcpp::TimerBase::SharedPtr publish_timer_;
-  std::mutex active_mutex_;
-  std::map<rclcpp_action::GoalUUID, std::shared_ptr<ExecutionState>> active_goals_;
+    // ---------- 处理 Goal 接受 ----------
+    void handle_accepted(
+        const std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> goal_handle)
+    {
+        const auto goal = goal_handle->get_goal();
+
+        // 解析 JSON，预期格式:
+        //  {"name":"shell_exec","arguments":{"command":"...","timeout_sec":...}}
+        json input;
+        try {
+            input = json::parse(goal->input_json);
+        } catch (...) {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Failed to parse input JSON");
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: failed to parse JSON"})";
+            goal_handle->abort(result);
+            return;
+        }
+
+        // 校验 tool name 是否为 "shell_exec"
+        if (!input.contains("name") || !input["name"].is_string() || input["name"].get<std::string>() != "shell_exec") {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Invalid or mismatched tool name");
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: bad tool name"})";
+            goal_handle->abort(result);
+            return;
+        }
+
+        // 校验 arguments 存在且为对象
+        if (!input.contains("arguments") || !input["arguments"].is_object()) {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Missing arguments");
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: missing arguments"})";
+            goal_handle->abort(result);
+            return;
+        }
+
+        // 校验 command 非空字符串
+        if (!input["arguments"].contains("command") || !input["arguments"]["command"].is_string() || input["arguments"]["command"].get<std::string>().empty()) {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Missing or empty command");
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = R"({"error":"invalid input: command is required"})";
+            goal_handle->abort(result);
+            return;
+        }
+
+        // 启动独立执行线程
+        canceled_.store(false);
+        std::thread{[this, goal_handle]() { execute(goal_handle); }}.detach();
+    }
+
+    // ---------- 核心：执行 Shell 命令 ----------
+    void execute(
+        const std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> goal_handle)
+    {
+        auto result = std::make_shared<ExecuteTool::Result>();
+        const auto goal = goal_handle->get_goal();
+
+        // 1. 提取参数 (已在 handle_accepted 校验过，安全取值)
+        json input = json::parse(goal->input_json);
+        std::string command = input["arguments"]["command"].get<std::string>();
+        double timeout = default_timeout_;
+        if (input["arguments"].contains("timeout_sec") &&
+            input["arguments"]["timeout_sec"].is_number()) {
+            double ts = input["arguments"]["timeout_sec"].get<double>();
+            if (ts > 0.0) timeout = ts;
+        }
+        auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::duration<double>(timeout);
+
+        // 2. 创建临时脚本
+        char temp_filename[] = "/tmp/cloudsoul_shell_exec_XXXXXX";
+        int temp_fd = mkstemp(temp_filename);
+        if (temp_fd == -1) {
+                        // 退出原因: 系统无法创建临时文件（磁盘满/权限/tmp不可写）
+            RCLCPP_ERROR(get_logger(), "execute: Failed to create temp file");
+            result->output_json = R"({"error":"temporary file creation failed"})";
+            goal_handle->abort(result);
+            return;
+        }
+        std::string script = "#!/bin/sh\n" + command;
+        if (write(temp_fd, script.c_str(), script.size()) !=
+            static_cast<ssize_t>(script.size())) {
+            close(temp_fd); unlink(temp_filename);
+                        // 退出原因: 写入临时文件失败（磁盘满或权限问题）
+            RCLCPP_ERROR(get_logger(), "execute: Failed to write temp file");
+            result->output_json = R"({"error":"failed to write script to temp file"})";
+            goal_handle->abort(result);
+            return;
+        }
+        close(temp_fd);
+        chmod(temp_filename, 0700);
+
+        // 3. 创建管道
+        int pipefd[2];
+        if (pipe(pipefd) != 0) {
+            unlink(temp_filename);
+                        // 退出原因: 管道创建失败（系统 fd 耗尽）
+            RCLCPP_ERROR(get_logger(), "execute: Pipe creation failed");
+            result->output_json = R"({"error":"pipe creation failed"})";
+            goal_handle->abort(result);
+            return;
+        }
+
+        // 4. fork 子进程
+        pid_t pid = fork();
+        if (pid == -1) {
+            close(pipefd[0]); close(pipefd[1]); unlink(temp_filename);
+                        // 退出原因: fork 失败（进程数达上限或内存不足）
+            RCLCPP_ERROR(get_logger(), "execute: Fork failed");
+            result->output_json = R"({"error":"fork failed"})";
+            goal_handle->abort(result);
+            return;
+        }
+
+        if (pid == 0) {
+            // 子进程: stdin→/dev/null, stdout/stderr→管道写端
+            close(pipefd[0]);
+            int nullfd = open("/dev/null", O_RDONLY);
+            if (nullfd >= 0) { dup2(nullfd, STDIN_FILENO); close(nullfd); }
+            dup2(pipefd[1], STDOUT_FILENO);
+            dup2(pipefd[1], STDERR_FILENO);
+            close(pipefd[1]);
+            execl("/bin/sh", "sh", temp_filename, (char*)nullptr);
+            _exit(127);
+        }
+
+        // 父进程: 关闭写端，读端设非阻塞
+        close(pipefd[1]);
+        int flags = fcntl(pipefd[0], F_GETFL, 0);
+        if (flags != -1) {
+            fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
+        }
+
+        // kill 并等待子进程结束，返回 true 表示成功终止
+        auto kill_and_wait = [&]() -> bool {
+            if (kill(pid, SIGKILL) != 0) {
+                RCLCPP_WARN(get_logger(), "execute: kill(%d, SIGKILL) failed, errno=%d", pid, errno);
+                return false;
+            }
+            auto kill_start = std::chrono::steady_clock::now();
+            while (true) {
+                pid_t w = waitpid(pid, nullptr, WNOHANG);
+                if (w == pid || w == -1) return true;
+                if (std::chrono::steady_clock::now() - kill_start > KILL_WAIT_TIMEOUT) {
+                    RCLCPP_WARN(get_logger(), "execute: kill_and_wait timeout, pid=%d may still be alive", pid);
+                    return false;
+                }
+                std::this_thread::sleep_for(KILL_POLL_INTERVAL);
+            }
+        };
+
+        // 5. 轮询循环
+        std::string output;
+        char buffer[SHELL_OUTPUT_BUF_SIZE];
+        int child_exit_code = -1;
+        bool canceled = false;
+        bool timed_out = false;
+
+        while (true) {
+
+            // 检查取消
+            if (canceled_.load()) {
+                canceled = true;
+                kill_and_wait();
+                break;
+            }
+
+            // 检查超时
+            if (std::chrono::steady_clock::now() > deadline) {
+                timed_out = true;
+                kill_and_wait();
+                break;
+            }
+
+            // 检查子进程是否已退出
+            int status;
+            pid_t w = waitpid(pid, &status, WNOHANG);
+            if (w == pid) {
+                ssize_t n;
+                while ((n = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
+                    output.append(buffer, n);
+                }
+                if (WIFEXITED(status)) child_exit_code = WEXITSTATUS(status);
+                else if (WIFSIGNALED(status)) child_exit_code = -1;
+                break;
+            }
+
+            // 读管道输出
+            ssize_t n = read(pipefd[0], buffer, sizeof(buffer));
+            if (n > 0) {
+                output.append(buffer, n);
+            } else if (n == 0) {
+                break;
+            } else {
+                if (errno != EAGAIN && errno != EWOULDBLOCK) break;
+            }
+
+            std::this_thread::sleep_for(PROCESS_POLL_INTERVAL);
+        }
+
+        // 6. 清理
+        close(pipefd[0]);
+        unlink(temp_filename);
+
+        // 7. 组装结果
+        json out;
+        if (canceled) {
+            out["error"] = "execution canceled";
+            out["stdout"] = output;
+                        // 退出原因: 用户通过 output_mgmt 请求取消
+            RCLCPP_INFO(get_logger(), "execute: Command canceled, output_size=%zu", output.size());
+        } else if (timed_out) {
+            out["error"] = "timed out after " + std::to_string(timeout) + "s";
+            out["stdout"] = output;
+                        // 退出原因: 命令执行超过 timeout_sec 限制
+            RCLCPP_WARN(get_logger(), "execute: Command timed out after %.1fs, output_size=%zu",
+                        timeout, output.size());
+        } else if (child_exit_code == 0) {
+            out["stdout"] = output;
+            out["exit_code"] = 0;
+                        // 正常退出: 命令成功执行，退出码 0
+            RCLCPP_INFO(get_logger(), "execute: Command succeeded, exit_code=0, output_size=%zu",
+                        output.size());
+        } else {
+            out["stdout"] = output;
+            out["exit_code"] = child_exit_code;
+                        // 退出原因: 命令执行完成但返回非零退出码
+            RCLCPP_INFO(get_logger(), "execute: Command failed, exit_code=%d, output_size=%zu",
+                        child_exit_code, output.size());
+        }
+        result->output_json = out.dump();
+        goal_handle->succeed(result);
+    }
+
+
+    // ========== 成员变量 ==========
+    std::string agent_name_;
+    double default_timeout_ = DEFAULT_TIMEOUT;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr info_pub_;
+    rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
+    rclcpp::TimerBase::SharedPtr publish_timer_;
+    std::atomic<bool> canceled_{false};
 };
 
-int main(int argc, char ** argv) {
-  rclcpp::init(argc, argv);
-  auto temp = std::make_shared<rclcpp::Node>("temp");
-  temp->declare_parameter<std::string>("agent_name", "agent");
-  std::string agent_name = temp->get_parameter("agent_name").as_string();
-  temp.reset();
-  auto node = std::make_shared<ShellExecNode>(agent_name);
-  rclcpp::spin(node);
-  rclcpp::shutdown();
-  return 0;
+// ================================================================
+// main
+// ================================================================
+int main(int argc, char** argv) {
+    rclcpp::init(argc, argv);
+    auto temp = std::make_shared<rclcpp::Node>("temp");
+    temp->declare_parameter<std::string>("agent_name", "agent");
+    std::string agent_name = temp->get_parameter("agent_name").as_string();
+    temp.reset();
+    auto node = std::make_shared<ShellExecNode>(agent_name);
+    rclcpp::spin(node);
+    rclcpp::shutdown();
+    return 0;
 }
