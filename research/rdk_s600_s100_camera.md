@@ -94,3 +94,15 @@ GMSL 参数: -l link_port (0:A 1:B 2:C 3:D), -m mipi_rx (MIPI host 1/2)
 ## 社区项目
 - ros2-patrol-robot (wangshichen0506): ROS2停车巡检机器人, 适配S100
 - HeyRobotModelApis (sunshineharry): S600端侧OpenAI兼容API (Qwen3-VL-8B + whisper-medium)
+
+## 硬件资料下载
+### S600 Camera Extension Board
+- 3D Model: https://archive.d-robotics.cc/downloads/hardware/rdk_s600/rdk_s600_camera_expansion_board/RDK_S600_CAMERA_EXPANSION_BOARD_3D_Model_V1P0_20260420.STEP
+- Brief (PDF): https://archive.d-robotics.cc/downloads/hardware/rdk_s600/rdk_s600_camera_expansion_board/drobotics_rdk_s600_camera_expansion_board_brief_v1p0_zh.pdf
+- Hardware Reference Design: https://archive.d-robotics.cc/downloads/hardware/rdk_s600/rdk_s600_camera_expansion_board/hardware_reference_design/
+
+### S100 Camera Extension Board
+- Manual (PDF): https://archive.d-robotics.cc/downloads/hardware/rdk_s100/rdk_s100_camera_expansion_board/d_robotics_rdk_s100_camera_expansion_board_zh_v1_1.pdf
+- Pinlist (XLSX): https://archive.d-robotics.cc/downloads/hardware/rdk_s100/rdk_s100_camera_expansion_board/drobotics_rdk_s100_camera_expansion_board_pinlist_v1p0_0924.xlsx
+- Reference Design (ZIP): https://archive.d-robotics.cc/downloads/hardware/rdk_s100/rdk_s100_camera_expansion_board/drobotics_rdk_s100_camera_expansion_board_reference_design_v1p0.zip
+- 3D Model (STEP): https://archive.d-robotics.cc/downloads/hardware/rdk_s100/rdk_s100_camera_expansion_board/drobotics_rdk_s100_camera_expansion_board_v1p0.step
