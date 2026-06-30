@@ -61,3 +61,15 @@ GitHub: github.com/D-Robotics/rdk_s_doc
 
 ## 配件: GS130Wi 双目相机
 - 同GS130W + 红外结构光
+
+## S600 VIN 相机传感器列表
+(来源: /app/multimedia_samples/sample_vin/get_vin_data -h)
+| 索引 | 传感器 | 配置 |
+|------|--------|------|
+| 0 | imx219-30fps | 1920x1080 raw10 30fps 1lane |
+| 1 | sc1336_gmsl-30fps | 1280x720 raw10 30fps 2lane (GMSL) |
+| 2 | ar0820std-30fps | 3840x2160 30fps 1lane (GMSL) |
+| 3 | ar0820std-1080p30 | 1920x1080 yuv 30fps 1lane (GMSL) |
+| 4 | ovx3cstd-30fps | 1920x1280 yuv 30fps 1lane (GMSL Serdes) |
+
+GMSL 参数: -l link_port (0:A 1:B 2:C 3:D), -m mipi_rx (MIPI host 1/2)
