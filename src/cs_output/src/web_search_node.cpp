@@ -102,7 +102,7 @@ public:
         curl_global_init(CURL_GLOBAL_DEFAULT);
 
         std::string topic = "/" + agent_name_ + "/output/web_search/info";
-        info_pub_ = create_publisher<std_msgs::msg::String>(topic, 10);
+        info_pub_ = create_publisher<std_msgs::msg::String>(topic, rclcpp::QoS(1).reliable().transient_local());
         info_timer_ = create_wall_timer(
             std::chrono::milliseconds(static_cast<int>(1000.0 / info_rate_)),
             [this]() {
