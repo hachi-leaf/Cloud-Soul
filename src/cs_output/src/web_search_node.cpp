@@ -131,13 +131,14 @@ private:
   "type": "function",
   "function": {
     "name": "web_search",
-    "description": "使用 Bing 搜索引擎进行网页搜索。返回标题、URL 和摘要。\n\n参数:\n  - query: 搜索查询字符串（必填）\n  - max_results: 最大结果数（可选，默认10，最大20）",
+    "description": "网页搜索，返回标题、URL 和摘要。\n\n参数:\n  - query: 搜索查询字符串（必填）\n  - max_results: 最大结果数（可选，默认10，最大20）\n  - source: 搜索引擎（可选，默认 bing）。可选值: bing, auto",
     "parameters": {
       "type": "object",
       "required": ["query"],
       "properties": {
         "query": {"type": "string", "description": "搜索查询字符串"},
-        "max_results": {"type": "integer", "description": "最大结果数（默认10，最大20）"}
+        "max_results": {"type": "integer", "description": "最大结果数（默认10，最大20）"},
+        "source": {"type": "string", "description": "搜索引擎: bing（默认）, auto（自动选最快）"}
       }
     }
   }
@@ -164,13 +165,17 @@ private:
         if (input["arguments"].contains("max_results") && input["arguments"]["max_results"].is_number())
             n = std::min(input["arguments"]["max_results"].get<int>(), 20);
 
+        std::string source = "bing";
+        if (input["arguments"].contains("source") && input["arguments"]["source"].is_string())
+            source = input["arguments"]["source"];
+
         double timeout = default_timeout_;
         if (input["arguments"].contains("timeout_sec") && input["arguments"]["timeout_sec"].is_number()) {
             double t = input["arguments"]["timeout_sec"].get<double>();
             if (t > 0) timeout = t;
         }
 
-        json resp = do_search(query, n, timeout);
+        json resp = do_search(query, n, source, timeout);
 
         auto r = std::make_shared<ExecuteTool::Result>();
         r->output_json = resp.dump();
@@ -185,7 +190,8 @@ private:
     }
 
     // ─── 执行搜索 ───────────────────────────────────────────
-    json do_search(const std::string& query, int n, double timeout_sec) {
+    json do_search(const std::string& query, int n, const std::string& source, double timeout_sec) {
+        // source: "bing" or "auto" — currently only Bing is available
         CURL* curl = curl_easy_init();
         if (!curl) return {{"error", "curl init failed"}};
 
