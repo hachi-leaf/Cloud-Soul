@@ -21,6 +21,34 @@ static size_t write_cb(void* contents, size_t size, size_t nmemb, std::string* o
     return size * nmemb;
 }
 
+
+// UTF-8 清理：替换无效字节（nlohmann::json::dump 要求严格 UTF-8）
+static std::string sanitize_utf8(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ) {
+        unsigned char c = in[i];
+        if (c < 0x80) { out += c; i++; }                    // ASCII
+        else if (c < 0xC0) { out += '?'; i++; }             // 非法续字节
+        else if (c < 0xE0) {                                 // 2字节
+            if (i+1 < in.size() && (in[i+1] & 0xC0) == 0x80) { out += c; out += in[i+1]; }
+            else out += '?';
+            i += 2;
+        } else if (c < 0xF0) {                               // 3字节
+            if (i+2 < in.size() && (in[i+1] & 0xC0) == 0x80 && (in[i+2] & 0xC0) == 0x80) {
+                out += c; out += in[i+1]; out += in[i+2];
+            } else out += '?';
+            i += 3;
+        } else if (c < 0xF8) {                               // 4字节
+            if (i+3 < in.size() && (in[i+1] & 0xC0) == 0x80 && (in[i+2] & 0xC0) == 0x80 && (in[i+3] & 0xC0) == 0x80) {
+                out += c; out += in[i+1]; out += in[i+2]; out += in[i+3];
+            } else out += '?';
+            i += 4;
+        } else { out += '?'; i++; }
+    }
+    return out;
+}
+
 // HTML 实体解码（与 web_search 共用逻辑）
 static std::string decode_html_entities(const std::string& in) {
     std::string s = in;
@@ -209,10 +237,10 @@ private:
             return {{"error", "HTTP " + std::to_string(http_code)}};
         }
 
-        return extract_text(html, final_url ? final_url : url);
+        return extract_text(html, final_url ? final_url : url, url);
     }
 
-    json extract_text(const std::string& html, const std::string& url) {
+    json extract_text(const std::string& html, const std::string& final_url, const std::string& orig_url) {
         std::string clean = strip_blocks(html);
         clean = strip_tags(clean);
         clean = decode_html_entities(clean);
@@ -225,6 +253,9 @@ private:
         clean.erase(0, clean.find_first_not_of(" \t\r\n"));
         clean.erase(clean.find_last_not_of(" \t\r\n") + 1);
 
+        // UTF-8 清洗（防 nlohmann::json::dump 崩溃）
+        clean = sanitize_utf8(clean);
+
         // 限制返回大小（最多 500KB，保护 LLM 上下文）
         const size_t max_return = 500 * 1024;
         std::string body = clean;
@@ -235,7 +266,7 @@ private:
         }
 
         return {
-            {"url", url},
+            {"url", orig_url},
             {"size", clean.size()},
             {"text", body}
         };
