@@ -106,3 +106,16 @@ GMSL 参数: -l link_port (0:A 1:B 2:C 3:D), -m mipi_rx (MIPI host 1/2)
 - Pinlist (XLSX): https://archive.d-robotics.cc/downloads/hardware/rdk_s100/rdk_s100_camera_expansion_board/drobotics_rdk_s100_camera_expansion_board_pinlist_v1p0_0924.xlsx
 - Reference Design (ZIP): https://archive.d-robotics.cc/downloads/hardware/rdk_s100/rdk_s100_camera_expansion_board/drobotics_rdk_s100_camera_expansion_board_reference_design_v1p0.zip
 - 3D Model (STEP): https://archive.d-robotics.cc/downloads/hardware/rdk_s100/rdk_s100_camera_expansion_board/drobotics_rdk_s100_camera_expansion_board_v1p0.step
+
+## BSP/OS 下载
+### S600 V5.1.0
+- OS Images: https://archive.d-robotics.cc/downloads/os_images/rdk_s600/RDKS600-V5.1.0/
+  - LNX SDK: https://archive.d-robotics.cc/downloads/os_images/rdk_s600/RDKS600-V5.1.0/RDK_LNX_SDK/
+  - MCU SDK: https://archive.d-robotics.cc/downloads/os_images/rdk_s600/RDKS600-V5.1.0/RDK_MCU_SDK/
+
+### S100
+- OS Images: https://archive.d-robotics.cc/downloads/os_images/rdk_s100/
+
+### 下载资源总索引
+- 主站: https://archive.d-robotics.cc/downloads/
+- 硬件: hardware/, OS: os_images/, 模型: models/, 数据表: datasheets/
