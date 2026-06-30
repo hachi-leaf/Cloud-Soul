@@ -42,3 +42,22 @@ S100(KS1E55Y): 1.5GHz/12GB/80TOPS | S100P(KS1P75Y): 2.0GHz/24GB/128TOPS
 S600: developer.d-robotics.cc/rdk_s_doc/01_Quick_start/01_hardware_introduction/02_rdk_s600/01_rdk_s600_kit
 S100: developer.d-robotics.cc/rdk_s_doc/01_Quick_start/01_hardware_introduction/01_rdk_s100/01_rdk_s100_kit
 GitHub: github.com/D-Robotics/rdk_s_doc
+
+## VLA (Pi0) 案例
+- 硬件: RDK S600
+- 模型: Pi0, 端侧推理 98ms total
+  - pre-process: 1.5ms, vision: 18.5ms, language: 39ms, action: 38.5ms, post-process: 0.05ms
+  - 内存: 4.4GB
+- 仿真: RoboTwin (github.com/D-Robotics/RoboTwin, branch pi0pub)
+- 支持自训练模型 + 实机联调
+
+## 配件: GS130W 双目相机
+- 传感器: 双SC132GS 全局快门
+- 基线: 80mm
+- 分辨率: 1280×1080, 最高120fps
+- HDR, SNR 40dB, 850/940nm NIR
+- 兼容: X5, S100(需Camera板), S600
+- 接口: 双MIPI
+
+## 配件: GS130Wi 双目相机
+- 同GS130W + 红外结构光
