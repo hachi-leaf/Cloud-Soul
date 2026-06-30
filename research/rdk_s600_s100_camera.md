@@ -73,3 +73,20 @@ GitHub: github.com/D-Robotics/rdk_s_doc
 | 4 | ovx3cstd-30fps | 1920x1280 yuv 30fps 1lane (GMSL Serdes) |
 
 GMSL 参数: -l link_port (0:A 1:B 2:C 3:D), -m mipi_rx (MIPI host 1/2)
+
+## LeRobot + BPU 部署
+- rdk_LeRobot_tools: https://github.com/D-Robotics/rdk_LeRobot_tools
+- SO100 单臂/双臂性能对比
+- 全流程: 校准→遥操→数据集→训练→CPU推理→ONNX导出→BPU编译→BPU部署
+- 社区博客: https://developer.d-robotics.cc/forumDetail/289424806557116771
+- Feishu: https://horizonrobotics.feishu.cn/docx/HSr8dBdZ0oQ5OwxPQvBcsuyZnWe
+
+## S600 V5.1.0 Release (2026-06-12)
+- NVMe 启动支持（Flash分区变化, 必须整烧）
+- ACore CAN (C+Python)
+- ACore UART/SPI
+- 新相机驱动: shw3h, shw3f, MC30E0Z23-00-03
+- ORBBEC 335LG 深度相机
+- 10GbE 需固件下载才有万兆性能
+- NVMe 启动不支持休眠唤醒
+- V1P0 硬件版本
