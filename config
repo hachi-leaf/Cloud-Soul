@@ -195,6 +195,10 @@ def main():
             ask("delay_timeout         管理延迟 (秒)", default="5.0"))
         output_params["topic_output"] = ask(
             "topic_output          message_send 输出 topic", default="raw_message")
+        output_params["max_results"] = int(ask(
+            "max_results           web_search 最大结果数", default="10"))
+        output_params["max_size_mb"] = int(ask(
+            "max_size_mb           web_fetch 最大下载文件大小(MB)", default="5"))
     else:
         print(f"    {D}⏭ 已跳过，使用默认值{C_RESET}")
 

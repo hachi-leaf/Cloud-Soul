@@ -143,6 +143,19 @@ cd Cloud-Soul && colcon build --symlink-install
 
 ## 📝 Release Notes
 
+
+### v0.4.0-Beta (2026-07-01)
+
+**Portal 节点全链路改造 + 基础设施升级**
+
+- **web_search_node**: 新增门户工具，支持 bing 搜索，HTML 抓取+正则提取，对齐 shell_exec_node 代码风格。
+- **web_fetch_node**: 新增门户工具，全链路 zero-regex 处理（strip_blocks/strip_tags/decode_html_entities/extract_text 全部按字符扫描 O(n)，解决大 HTML 上 std::regex 栈溢出 SIGSEGV 崩溃），线程化改造（work_thread 异步执行不阻塞 executor），支持 config.yaml 参数化（max_results/max_size_mb）。
+- **skills_loader_node**: 完整重写。线程化、构造函数+temp node、info desc 改为全量 frontmatter 文本（让 LLM 看到完整 skill 加载条件）、扫描时机改为启动+list+load 三时机。
+- **4 个 portal 节点代码风格统一**: 全部对齐 shell_exec_node 结构——构造函数接受 agent_name、main 中 temp node 获取、handle_cancel/handle_accepted 命名、canceled_ 原子变量、错误路径 abort+exit_code=1。
+- **Fast-DDS → CycloneDDS**: 根治多节点 libfastrtps 段错误（participant 泄漏/discovery 竞态），安装 ros-humble-rmw-cyclonedds-cpp，start 脚本设置 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp。
+- **web_chat 文件上传**: /send 附件消息包含完整文件路径 `[附件: name → /tmp/web_uploads/xxx]`，Agent 可直接读取。
+- **start 脚本修复**: 恢复 repo_dir 传参（被 max_results/max_size_mb 插入覆盖导致 skills_loader 启动失败）。
+- **METHOD.md 更新**: 记录 Fast-DDS 稳定性问题 + web_fetch regex 栈溢出教训。
 ### v0.3.6-Beta (2026-06-30)
 
 **output_mgmt + output nodes 完整重构**
@@ -161,11 +174,11 @@ cd Cloud-Soul && colcon build --symlink-install
 
 | Metric | Value |
 |--------|-------|
-| Latest | `v0.3.6-Beta` |
+| Latest | `v0.4.0-Beta` |
 | Packages | 4 (`cs_core` `cs_input` `cs_output` `cs_interfaces`) |
-| Tools | 3 (`shell_exec` `file_rdwt` `message_send`) |
+| Tools | 6 (`shell_exec` `file_rdwt` `message_send` `web_search` `web_fetch` `skills_loader`) |
 | Sensors | 3 (`system_status` `message_receive` `ros_msg`) |
-| Nodes | 10+ |
+| Nodes | 13+ |
 
 ---
 

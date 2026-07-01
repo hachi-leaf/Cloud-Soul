@@ -127,7 +127,12 @@ def handle_send():
     files = data.get('files', [])
     display_msg = msg
     if files:
-        parts = [f"{f.get('original_name', f.get('name', 'unknown'))} ({f.get('size_human', '?')})" for f in files]
+        parts = []
+        for f in files:
+            info = f"{f.get('original_name', f.get('name', 'unknown'))} ({f.get('size_human', '?')})"
+            if f.get('path'):
+                info += f" -> {f.get('path')}"
+            parts.append(info)
         display_msg = msg + '\n[附件: ' + ', '.join(parts) + ']'
         msg = msg + '\n[附件: ' + ', '.join(parts) + ']'
     broadcast_message(display_msg, role='user', files=data.get('files'))

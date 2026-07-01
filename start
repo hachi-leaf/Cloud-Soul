@@ -100,6 +100,8 @@ WEB_CHAT_CHANNEL=$(yaml_get "input.web_chat_channel")
 INFO_TIMEOUT_OUT=$(yaml_get "output.info_timeout")
 INFO_RATE_OUT=$(yaml_get "output.info_rate")
 TOPIC_OUTPUT=$(yaml_get "output.topic_output")
+MAX_RESULTS=$(yaml_get "output.max_results")
+MAX_SIZE_MB=$(yaml_get "output.max_size_mb")
 
 echo "  Agent: $AGENT_NAME"
 echo "  LLM:   $LLM_MODEL"
@@ -121,6 +123,9 @@ fi
 if [ -f "$SCRIPT_DIR/install/setup.bash" ]; then
     set +u
     source "$SCRIPT_DIR/install/setup.bash"
+# 使用 CycloneDDS 替代默认 Fast-DDS（更稳定）
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
     set -u
 else
     echo "❌ 找不到 Cloud-Soul install/setup.bash，请先 colcon build"
@@ -184,9 +189,14 @@ ros2 launch cs_output cs_output.launch.py \
     discovery_period:="$DISCOVERY_PERIOD" \
     info_rate:="$INFO_RATE_OUT" \
     topic_output:="$TOPIC_OUTPUT" \
+    max_results:="$MAX_RESULTS" \
+    max_size_mb:="$MAX_SIZE_MB" \
+    repo_dir:="$SOUL_DIR" \
     &> /tmp/cloudsoul_cs_output.log &
 OUTPUT_PID=$!
 echo "   PID: $OUTPUT_PID"
+
+sleep 3
 
 # ═══════════════════════════════════════════════════════
 #  启动 cs_core
