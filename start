@@ -196,6 +196,8 @@ ros2 launch cs_output cs_output.launch.py \
 OUTPUT_PID=$!
 echo "   PID: $OUTPUT_PID"
 
+sleep 3
+
 # ═══════════════════════════════════════════════════════
 #  启动 cs_core
 # ═══════════════════════════════════════════════════════
