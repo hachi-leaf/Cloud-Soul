@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 // ================================================================
-// Cloud-Soul Web 搜索工具节点 (v2)
-// 多引擎搜索 (bing/360/sogou/auto)，线程化执行，支持取消
+// Cloud-Soul Web 搜索工具节点
+// Bing 搜索引擎，线程化执行，支持取消
 // ================================================================
 
 #include <curl/curl.h>
@@ -12,7 +12,6 @@
 #include <atomic>
 #include <chrono>
 #include <sstream>
-#include <algorithm>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
 #include "rclcpp/rclcpp.hpp"
@@ -21,7 +20,6 @@
 
 using json = nlohmann::json;
 using ExecuteTool = cs_interfaces::action::ExecuteTool;
-using namespace std::chrono_literals;
 
 static std::string strip_html(const std::string& in) {
     std::string out;
@@ -40,6 +38,7 @@ static std::string strip_html(const std::string& in) {
     };
     replace("&amp;", "&");  replace("&lt;", "<");   replace("&gt;", ">");
     replace("&quot;", "\""); replace("&#39;", "'"); replace("&nbsp;", " ");
+    replace("&ensp;", " ");  // Bing 用的半角空格实体
     std::string cleaned;
     bool prev_space = true;
     for (char c : out) {
@@ -51,24 +50,9 @@ static std::string strip_html(const std::string& in) {
     return cleaned;
 }
 
-struct EngineConfig {
-    std::string name;
-    std::string host;
-    std::string url_prefix;
-    std::string result_pattern;
-};
-
-static const std::vector<EngineConfig> ENGINES = {
-    {"bing",  "www.bing.com",
-     "https://www.bing.com/search?q=",
-     "<li class=\"b_algo\"[^>]*>.*?<h2[^>]*>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>.*?<p[^>]*>(.*?)</p>"},
-    {"so360", "www.so.com",
-     "https://www.so.com/s?q=",
-     "<li class=\"res-list\"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>.*?<p class=\"res-desc\"[^>]*>(.*?)</p>"},
-    {"sogou", "www.sogou.com",
-     "https://www.sogou.com/web?query=",
-     "<div class=\"vrwrap\"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>.*?<p class=\"star-wiki\"[^>]*>(.*?)</p>"},
-};
+// Bing 搜索页面的正则模式
+static const char* BING_PATTERN =
+    "<li class=\"b_algo\"[^>]*>.*?<h2[^>]*>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>.*?<p[^>]*>(.*?)</p>";
 
 static size_t curl_write_cb(void* ptr, size_t sz, size_t nmemb, void* userdata) {
     auto* buf = static_cast<std::string*>(userdata);
@@ -80,43 +64,8 @@ static std::string err_json(const std::string& msg) {
     return "{\"error\":\"" + msg + "\"}";
 }
 
-static int check_latency_ms(const std::string& host, const std::string& proxy) {
-    CURL* c = curl_easy_init();
-    if (!c) return -1;
-    std::string url = "https://" + host + "/";
-    curl_easy_setopt(c, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(c, CURLOPT_NOBODY, 1L);
-    curl_easy_setopt(c, CURLOPT_TIMEOUT, 5L);
-    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 3L);
-    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
-    if (!proxy.empty()) curl_easy_setopt(c, CURLOPT_PROXY, proxy.c_str());
-    CURLcode res = curl_easy_perform(c);
-    long http_code = 0;
-    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
-    double total = 0;
-    curl_easy_getinfo(c, CURLINFO_TOTAL_TIME, &total);
-    curl_easy_cleanup(c);
-    return (res == CURLE_OK && http_code > 0 && http_code < 500)
-        ? static_cast<int>(total * 1000) : -1;
-}
-
-static int select_engine_static(const std::string& source, const std::string& proxy) {
-    if (source == "auto") {
-        int best_idx = 0, best_lat = 999999;
-        for (size_t i = 0; i < ENGINES.size(); ++i) {
-            int lat = check_latency_ms(ENGINES[i].host, proxy);
-            if (lat >= 0 && lat < best_lat) { best_lat = lat; best_idx = i; }
-        }
-        return best_idx;
-    }
-    for (size_t i = 0; i < ENGINES.size(); ++i)
-        if (ENGINES[i].name == source) return i;
-    return 0;
-}
-
-static json do_search(const EngineConfig& eng, const std::string& query,
-                      int max_r, int timeout_s, const std::string& proxy) {
+static json do_search(const std::string& query, int max_r, int timeout_s,
+                      const std::string& proxy) {
     json result;
     result["results"] = json::array();
     result["count"] = 0;
@@ -124,7 +73,7 @@ static json do_search(const EngineConfig& eng, const std::string& query,
     CURL* c = curl_easy_init();
     if (!c) { result["error"] = "curl init failed"; return result; }
 
-    std::string url = eng.url_prefix;
+    std::string url = "https://www.bing.com/search?q=";
     char* esc = curl_easy_escape(c, query.c_str(), query.size());
     url += esc; curl_free(esc);
 
@@ -155,7 +104,7 @@ static json do_search(const EngineConfig& eng, const std::string& query,
         return result;
     }
 
-    std::regex re(eng.result_pattern, std::regex::icase);
+    std::regex re(BING_PATTERN, std::regex::icase);
     auto it = std::sregex_iterator(body.begin(), body.end(), re);
     auto end = std::sregex_iterator();
     for (int k = 0; it != end && k < max_r; ++it, ++k) {
@@ -244,25 +193,18 @@ private:
             return;
         }
 
-        std::string query   = args["query"];
-        int    max_r    = args.value("max_results", max_results_);
-        std::string source = args.value("source", "auto");
-        int    timeout_s = args.value("timeout_sec", static_cast<int>(default_timeout_));
+        std::string query = args["query"];
+        int max_r     = args.value("max_results", max_results_);
+        int timeout_s = args.value("timeout_sec", static_cast<int>(default_timeout_));
 
-        RCLCPP_INFO(this->get_logger(), "search query='%s' engine=%s max=%d timeout=%d",
-                    query.c_str(), source.c_str(), max_r, timeout_s);
+        RCLCPP_INFO(this->get_logger(), "search query='%s' max=%d timeout=%d",
+                    query.c_str(), max_r, timeout_s);
 
-        // 所有阻塞工作（引擎选择 + 搜索）都在 worker 线程中执行，不阻塞 ROS2 executor
         auto safe_handle = handle;
         std::string proxy = proxy_;
         std::thread([=, this]() {
             auto t0 = std::chrono::steady_clock::now();
-
-            int ei = select_engine_static(source, proxy);
-            const auto& eng = ENGINES[ei];
-            RCLCPP_INFO(this->get_logger(), "selected engine=%s", eng.name.c_str());
-
-            json res = do_search(eng, query, max_r, timeout_s, proxy);
+            json res = do_search(query, max_r, timeout_s, proxy);
             auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - t0).count();
 
@@ -276,8 +218,8 @@ private:
             auto sr = std::make_shared<ExecuteTool::Result>();
             sr->output_json = res.dump();
             sr->exit_code = res.contains("error") ? 1 : 0;
-            RCLCPP_INFO(this->get_logger(), "done in %ldms results=%d engine=%s",
-                        ms, res.value("count", 0), eng.name.c_str());
+            RCLCPP_INFO(this->get_logger(), "done in %ldms results=%d",
+                        ms, res.value("count", 0));
             safe_handle->succeed(sr);
         }).detach();
     }
