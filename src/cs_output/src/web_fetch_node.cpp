@@ -89,12 +89,67 @@ static std::string strip_tags(const std::string& in) {
     return std::regex_replace(in, std::regex("<[^>]+>"), "");
 }
 
-// 去除脚本和样式块
+// 去除脚本、样式块和 HTML 注释 — 手动状态机，避免 std::regex 栈溢出
 static std::string strip_blocks(const std::string& in) {
-    std::string s = std::regex_replace(in, std::regex("<script[^>]*>.*?</script>", std::regex::icase), "");
-    s = std::regex_replace(s, std::regex("<style[^>]*>.*?</style>", std::regex::icase), "");
-    s = std::regex_replace(s, std::regex("<!--.*?-->"), "");
-    return s;
+    std::string out;
+    out.reserve(in.size());
+    size_t i = 0;
+    while (i < in.size()) {
+        // 检查是否是 <script ...> ... </script>
+        if (i + 7 < in.size() &&
+            (in[i]=='<' && (in[i+1]=='s'||in[i+1]=='S') && (in[i+2]=='c'||in[i+2]=='C') &&
+             (in[i+3]=='r'||in[i+3]=='R') && (in[i+4]=='i'||in[i+4]=='I') &&
+             (in[i+5]=='p'||in[i+5]=='P') && (in[i+6]=='t'||in[i+6]=='T')))
+        {
+            // 找到 script 结束标签的位置
+            size_t j = i + 7;
+            // 跳过 <script ...> 到 > 
+            while (j < in.size() && in[j] != '>') j++;
+            if (j < in.size()) j++; // 跳过 >
+            // 找到 </script>
+            size_t end = std::string::npos;
+            for (size_t k = j; k + 8 < in.size(); k++) {
+                if (in[k]=='<' && in[k+1]=='/' &&
+                    (in[k+2]=='s'||in[k+2]=='S') && (in[k+3]=='c'||in[k+3]=='C') &&
+                    (in[k+4]=='r'||in[k+4]=='R') && (in[k+5]=='i'||in[k+5]=='I') &&
+                    (in[k+6]=='p'||in[k+6]=='P') && (in[k+7]=='t'||in[k+7]=='T') &&
+                    in[k+8]=='>') {
+                    end = k + 9;
+                    break;
+                }
+            }
+            if (end != std::string::npos) { i = end; continue; }
+        }
+        // 检查是否是 <style ...> ... </style>
+        if (i + 6 < in.size() &&
+            (in[i]=='<' && (in[i+1]=='s'||in[i+1]=='S') && (in[i+2]=='t'||in[i+2]=='T') &&
+             (in[i+3]=='y'||in[i+3]=='Y') && (in[i+4]=='l'||in[i+4]=='L') &&
+             (in[i+5]=='e'||in[i+5]=='E')))
+        {
+            size_t j = i + 6;
+            while (j < in.size() && in[j] != '>') j++;
+            if (j < in.size()) j++;
+            size_t end = std::string::npos;
+            for (size_t k = j; k + 7 < in.size(); k++) {
+                if (in[k]=='<' && in[k+1]=='/' &&
+                    (in[k+2]=='s'||in[k+2]=='S') && (in[k+3]=='t'||in[k+3]=='T') &&
+                    (in[k+4]=='y'||in[k+4]=='Y') && (in[k+5]=='l'||in[k+5]=='L') &&
+                    (in[k+6]=='e'||in[k+6]=='E') && in[k+7]=='>') {
+                    end = k + 8;
+                    break;
+                }
+            }
+            if (end != std::string::npos) { i = end; continue; }
+        }
+        // 检查是否是 HTML 注释 <!-- ... -->
+        if (i + 4 < in.size() && in[i]=='<' && in[i+1]=='!' && in[i+2]=='-' && in[i+3]=='-') {
+            size_t end = in.find("-->", i + 4);
+            if (end != std::string::npos) { i = end + 3; continue; }
+        }
+        out += in[i];
+        i++;
+    }
+    return out;
 }
 
 class WebFetchNode : public rclcpp::Node {
