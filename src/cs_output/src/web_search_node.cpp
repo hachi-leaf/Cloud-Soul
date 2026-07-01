@@ -61,7 +61,7 @@ struct EngineConfig {
 static const std::vector<EngineConfig> ENGINES = {
     {"bing",  "www.bing.com",
      "https://www.bing.com/search?q=",
-     "<li class=\"b_algo\"[^>]*>.*?<h2>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>.*?<p[^>]*>(.*?)</p>"},
+     "<li class=\"b_algo\"[^>]*>.*?<h2[^>]*>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>.*?<p[^>]*>(.*?)</p>"},
     {"so360", "www.so.com",
      "https://www.so.com/s?q=",
      "<li class=\"res-list\"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>.*?<p class=\"res-desc\"[^>]*>(.*?)</p>"},
