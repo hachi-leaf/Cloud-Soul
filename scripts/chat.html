@@ -478,7 +478,7 @@ function am(text,role,files,ts_server){
   const row=document.createElement('div');row.className='msg-row '+role;
   if(files&&files.length)text=text.replace(/\n\[附件:.*\]$/,'');
   let html=role==='user'?text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'):marked.parse(text||''),filesHtml='';
-  if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class=\"fchip\"><div class=\"fc\"><span class=\"fn\">'+nm+'</span><span class=\"fs\">'+sz+'</span></div></div>';});}
+  if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class=\"fchip\"><span class=\"fi\">'+fileIcon(nm)+'</span><div class=\"fc\"><span class=\"fn\">'+nm+'</span><span class=\"fs\">'+sz+'</span></div></div>';});}
   const ts=ts_server||new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
   row.innerHTML=avaHTML(role)+'<div class=\"msg-body\"><div class=\"bub\">'+html+'</div>'+(filesHtml?'<div class=\"attaches\">'+filesHtml+'</div>':'')+'<div class=\"time\">'+ts+'</div></div>';
   mi.appendChild(row);highlightCode(row);ms.scrollTop=ms.scrollHeight;
@@ -514,7 +514,7 @@ async function sm(){
 }
 
 function renderUpbar(){
-  let h='';selFiles.forEach((f,i)=>{const sz=szf(f.file.size);const cls=f.status==='err'?' style=\"color:#ea4335\"':'';h+='<div class=\"up-chip\"><span class=\"c-name\" title=\"'+f.file.name.replace(/\"/g,'&quot;')+'\">'+f.file.name.replace(/</g,'&lt;')+'</span><span>'+sz+'</span><span class=\"rm\" onclick=\"selFiles.splice('+i+',1);renderUpbar();ar()\">&times;</span></div>';});
+  let h='';selFiles.forEach((f,i)=>{const sz=szf(f.file.size);const cls=f.status==='err'?' style=\"color:#ea4335\"':'';h+='<div class=\"up-chip\"><span class=\"fi\">'+fileIcon(f.file.name)+'</span><span class=\"c-name\" title=\"'+f.file.name.replace(/\"/g,'&quot;')+'\">'+f.file.name.replace(/</g,'&lt;')+'</span><span>'+sz+'</span><span class=\"rm\" onclick=\"selFiles.splice('+i+',1);renderUpbar();ar()\">&times;</span></div>';});
   ub.innerHTML=h;
 }
 async function uploadAll(){
