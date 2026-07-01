@@ -406,6 +406,10 @@ body {
 .dark .hljs-regexp,.dark .hljs-symbol,.dark .hljs-variable{color:#ffa657}
 .dark .hljs-deletion{color:#ffdcd7}
 
+
+.fi { font-size: 20px; flex-shrink: 0; line-height: 1; }
+.up-chip .fi { font-size: 16px; }
+
 </style>
 </head>
 <body>
@@ -463,13 +467,16 @@ const copyBtn=document.createElement('button');copyBtn.innerHTML=copyIcon+'复�
 copyBtn.onclick=()=>{const code=pre.querySelector('code')||pre;navigator.clipboard.writeText(code.textContent).then(()=>{copyBtn.innerHTML=checkIcon+'复制';setTimeout(()=>{copyBtn.innerHTML=copyIcon+'复制';},2000);});};
 banner.appendChild(langSpan);banner.appendChild(copyBtn);wrap.appendChild(banner);pre.style.cssText='margin:0!important;border-radius:0 0 16px 16px;padding:16px;white-space:pre-wrap;word-break:break-all';pre.parentNode.insertBefore(wrap,pre);wrap.appendChild(pre);});}
 function highlightCode(el){el.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b)}catch(e){}});wrapCodeBlocks(el);}
+
+function fileIcon(name){const ext=(name||'').split('.').pop().toLowerCase();const map={pdf:'📄',doc:'📝',docx:'📝',txt:'📃',md:'📃',py:'💻',js:'💻',ts:'💻',cpp:'💻',c:'💻',h:'💻',hpp:'💻',rs:'💻',go:'💻',java:'💻',zip:'📦',tar:'📦',gz:'📦',rar:'📦',7z:'📦',png:'🖼️',jpg:'🖼️',jpeg:'🖼️',gif:'🖼️',svg:'🖼️',webp:'🖼️',mp3:'🎵',wav:'🎵',ogg:'🎵',flac:'🎵',mp4:'🎬',mov:'🎬',avi:'🎬',mkv:'🎬',xls:'📊',xlsx:'📊',csv:'📊',ppt:'📑',pptx:'📑',html:'🌐',css:'🌐',json:'⚙️',yaml:'⚙️',yml:'⚙️',xml:'⚙️',toml:'⚙️',ini:'⚙️',cfg:'⚙️',conf:'⚙️',sh:'💻',bash:'💻',zsh:'💻',fish:'💻',ps1:'💻',bat:'💻',cmake:'⚙️',makefile:'⚙️',dockerfile:'🐳',sql:'🗄️',db:'🗄️',sqlite:'🗄️',log:'📋',lock:'🔒',3mf:'🖨️',stl:'🖨️',obj:'🖨️',step:'🖨️',stp:'🖨️',igs:'🖨️',iges:'🖨️'};return map[ext]||'📎';}
+
 function szf(sz){if(sz>=1048576)return(sz/1048576).toFixed(1)+' MB';if(sz>=1024)return(sz/1024).toFixed(1)+' KB';return sz+' B';}
 
 function am(text,role,files,ts_server){
   const ei=mi.querySelector('.empty-hint');if(ei)ei.remove();
   const row=document.createElement('div');row.className='msg-row '+role;
   if(files&&files.length)text=text.replace(/\n\[附件:.*\]$/,'');
-  let html=marked.parse(text||''),filesHtml='';
+  let html=role==='user'?text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'):marked.parse(text||''),filesHtml='';
   if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class=\"fchip\"><div class=\"fc\"><span class=\"fn\">'+nm+'</span><span class=\"fs\">'+sz+'</span></div></div>';});}
   const ts=ts_server||new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
   row.innerHTML=avaHTML(role)+'<div class=\"msg-body\"><div class=\"bub\">'+html+'</div>'+(filesHtml?'<div class=\"attaches\">'+filesHtml+'</div>':'')+'<div class=\"time\">'+ts+'</div></div>';
