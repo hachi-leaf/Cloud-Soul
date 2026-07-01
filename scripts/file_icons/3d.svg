@@ -1,5 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 40">
-  <rect x="1" y="1" width="30" height="38" rx="3" fill="#8e24aa"/>
-  <path d="M22 1 L22 11 L32 11 Z" fill="#6a1b9a"/>
-  <text x="16" y="26" text-anchor="middle" fill="white" font-size="7" font-weight="bold" font-family="Arial,sans-serif">3D</text>
+  <defs>
+    <filter id="s"><feDropShadow dx="0" dy="1" stdDeviation="1" flood-opacity=".15"/></filter>
+  </defs>
+  <rect x="2" y="3" width="28" height="35" rx="3" fill="#fff" filter="url(#s)"/>
+  <rect x="2" y="3" width="28" height="8" rx="3" fill="#8e24aa"/>
+  <rect x="2" y="8" width="28" height="3" fill="#8e24aa"/>
+  <rect x="7" y="15" width="18" height="2" rx="1" fill="#dadce0"/>
+  <rect x="7" y="20" width="14" height="2" rx="1" fill="#dadce0"/>
+  <rect x="7" y="25" width="16" height="2" rx="1" fill="#dadce0"/>
+  <text x="16" y="35" text-anchor="middle" fill="#8e24aa" font-size="6" font-weight="700" font-family="Google Sans,Roboto,Arial,sans-serif">3D</text>
 </svg>
