@@ -100,6 +100,8 @@ WEB_CHAT_CHANNEL=$(yaml_get "input.web_chat_channel")
 INFO_TIMEOUT_OUT=$(yaml_get "output.info_timeout")
 INFO_RATE_OUT=$(yaml_get "output.info_rate")
 TOPIC_OUTPUT=$(yaml_get "output.topic_output")
+MAX_RESULTS=$(yaml_get "output.max_results")
+MAX_SIZE_MB=$(yaml_get "output.max_size_mb")
 
 echo "  Agent: $AGENT_NAME"
 echo "  LLM:   $LLM_MODEL"
@@ -187,6 +189,8 @@ ros2 launch cs_output cs_output.launch.py \
     discovery_period:="$DISCOVERY_PERIOD" \
     info_rate:="$INFO_RATE_OUT" \
     topic_output:="$TOPIC_OUTPUT" \
+    max_results:="$MAX_RESULTS" \
+    max_size_mb:="$MAX_SIZE_MB" \
     &> /tmp/cloudsoul_cs_output.log &
 OUTPUT_PID=$!
 echo "   PID: $OUTPUT_PID"
