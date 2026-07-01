@@ -28,6 +28,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SCRIPT_DIR = Path(__file__).parent.resolve()
 AVATAR_DIR = SCRIPT_DIR / 'config' / 'avatar'
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+FILE_ICON_DIR = SCRIPT_DIR / 'file_icons'
 
 # 历史 & 会话管理
 _history: list = []
@@ -180,6 +181,10 @@ def sessions():
 @app.route('/config/avatar/<path:filename>')
 def serve_avatar(filename):
     return send_from_directory(str(AVATAR_DIR), filename)
+
+@app.route('/file_icons/<path:filename>')
+def serve_file_icon(filename):
+    return send_from_directory(str(FILE_ICON_DIR), filename)
 
 def format_size(size):
     for unit in ['B', 'KB', 'MB', 'GB']:

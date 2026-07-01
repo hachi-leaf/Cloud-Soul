@@ -407,7 +407,7 @@ body {
 .dark .hljs-deletion{color:#ffdcd7}
 
 
-.fi{display:inline-flex;flex-shrink:0;width:26px;height:30px;border-radius:3px;position:relative;overflow:hidden}.fi::after{content:"";position:absolute;top:0;right:0;width:0;height:0;border-style:solid;border-width:0 9px 9px 0;border-color:transparent rgba(0,0,0,.18) transparent transparent}.fi::before{content:attr(data-type);position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:7px;font-weight:700;color:#fff;line-height:1;letter-spacing:.2px}.fi-pdf{background:#ea4335}.fi-doc{background:#1a73e8}.fi-txt{background:#5f6368}.fi-code{background:#34a853}.fi-zip{background:#f9ab00}.fi-img{background:#8e24aa}.fi-aud{background:#1a73e8}.fi-vid{background:#ea4335}.fi-xls{background:#34a853}.fi-ppt{background:#ea4335}.fi-web{background:#ea4335}.fi-cfg{background:#5f6368}.fi-term{background:#202124}.fi-db{background:#1a73e8}.fi-log{background:#5f6368}.fi-lock{background:#5f6368}.fi-3d{background:#8e24aa}.fi-file{background:#5f6368}.up-chip .fi{width:22px;height:26px;border-radius:2px}.up-chip .fi::after{border-width:0 7px 7px 0}.up-chip .fi::before{font-size:6px;bottom:1px}
+.fi{width:26px;height:32px;flex-shrink:0;border-radius:2px}.up-chip .fi{width:22px;height:28px}
 </style>
 </head>
 <body>
@@ -467,7 +467,7 @@ banner.appendChild(langSpan);banner.appendChild(copyBtn);wrap.appendChild(banner
 function highlightCode(el){el.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b)}catch(e){}});wrapCodeBlocks(el);}
 
 
-function fileIcon(name){const ext=(name||'').split('.').pop().toLowerCase();const m={pdf:'pdf',doc:'doc',docx:'doc',txt:'txt',md:'txt',py:'code',js:'code',ts:'code',cpp:'code',c:'code',h:'code',hpp:'code',rs:'code',go:'code',java:'code',zip:'zip',tar:'zip',gz:'zip',rar:'zip','7z':'zip',png:'img',jpg:'img',jpeg:'img',gif:'img',svg:'img',webp:'img',mp3:'aud',wav:'aud',ogg:'aud',flac:'aud',mp4:'vid',mov:'vid',avi:'vid',mkv:'vid',xls:'xls',xlsx:'xls',csv:'xls',ppt:'ppt',pptx:'ppt',html:'web',css:'web',json:'cfg',yaml:'cfg',yml:'cfg',xml:'cfg',toml:'cfg',ini:'cfg',cfg:'cfg',conf:'cfg',sh:'term',bash:'term',zsh:'term',fish:'term',ps1:'term',bat:'term',cmake:'cfg',makefile:'cfg',dockerfile:'cfg',sql:'db',db:'db',sqlite:'db',log:'log',lock:'lock','3mf':'3d',stl:'3d',obj:'3d',step:'3d',stp:'3d',igs:'3d',iges:'3d'};const t=m[ext]||'file';const lb=(ext||'file').toUpperCase().slice(0,4);return'<span class="fi fi-'+t+'" data-type="'+lb+'"></span>';}
+function fileIcon(name){const ext=(name||'').split('.').pop().toLowerCase();const m={pdf:'pdf',doc:'doc',docx:'doc',txt:'txt',md:'txt',py:'code',js:'code',ts:'code',cpp:'code',c:'code',h:'code',hpp:'code',rs:'code',go:'code',java:'code',zip:'zip',tar:'zip',gz:'zip',rar:'zip','7z':'zip',png:'img',jpg:'img',jpeg:'img',gif:'img',svg:'img',webp:'img',mp3:'aud',wav:'aud',ogg:'aud',flac:'aud',mp4:'vid',mov:'vid',avi:'vid',mkv:'vid',xls:'xls',xlsx:'xls',csv:'xls',ppt:'ppt',pptx:'ppt',html:'web',css:'web',json:'cfg',yaml:'cfg',yml:'cfg',xml:'cfg',toml:'cfg',ini:'cfg',cfg:'cfg',conf:'cfg',sh:'term',bash:'term',zsh:'term',fish:'term',ps1:'term',bat:'term',cmake:'cfg',makefile:'cfg',dockerfile:'cfg',sql:'db',db:'db',sqlite:'db',log:'file',lock:'file','3mf':'3d',stl:'3d',obj:'3d',step:'3d',stp:'3d',igs:'3d',iges:'3d'};return'<img class="fi" src="'+H_URL+'/file_icons/'+(m[ext]||'file')+'.svg" alt="'+ext+'">';}
 function szf(sz){if(sz>=1048576)return(sz/1048576).toFixed(1)+' MB';if(sz>=1024)return(sz/1024).toFixed(1)+' KB';return sz+' B';}
 
 function am(text,role,files,ts_server){
