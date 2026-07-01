@@ -1,283 +1,298 @@
 // Copyright (c) leaf
 // SPDX-License-Identifier: MIT
-//
-// web_search_node — 纯 C++ Bing 网页搜索 (libcurl + regex)
 
-#include "rclcpp/rclcpp.hpp"
-#include "rclcpp_action/rclcpp_action.hpp"
-#include "std_msgs/msg/string.hpp"
-#include "cs_interfaces/action/execute_tool.hpp"
+// ================================================================
+// Cloud-Soul Web 搜索工具节点 (v2)
+// 多引擎搜索 (bing/360/sogou/auto)，线程化执行，支持取消
+// ================================================================
 
-#include <nlohmann/json.hpp>
 #include <curl/curl.h>
 #include <regex>
+#include <thread>
+#include <atomic>
+#include <chrono>
 #include <sstream>
+#include <algorithm>
+#include <cstdlib>
+#include <nlohmann/json.hpp>
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
+#include "cs_interfaces/action/execute_tool.hpp"
 
 using json = nlohmann::json;
 using ExecuteTool = cs_interfaces::action::ExecuteTool;
-using GoalHandleExecute = rclcpp_action::ServerGoalHandle<ExecuteTool>;
+using namespace std::chrono_literals;
 
-static size_t write_cb(void* contents, size_t size, size_t nmemb, std::string* out) {
-    out->append((char*)contents, size * nmemb);
-    return size * nmemb;
-}
-
-// ─── HTML 实体解码 ──────────────────────────────────────────
-static std::string decode_html_entities(const std::string& in) {
-    std::string s = in;
-    // 常见 HTML 实体
-    static const std::vector<std::pair<std::string, std::string>> ents = {
-        {"&ensp;", " "}, {"&emsp;", " "}, {"&nbsp;", " "},
-        {"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"},
-        {"&quot;", "\""}, {"&apos;", "'"}, {"&middot;", "·"},
-        {"&bull;", "·"}, {"&ndash;", "–"}, {"&mdash;", "—"},
-    };
-    for (const auto& [entity, ch] : ents) {
+static std::string strip_html(const std::string& in) {
+    std::string out;
+    bool in_tag = false;
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '<') in_tag = true;
+        else if (in[i] == '>') { in_tag = false; continue; }
+        else if (!in_tag) out += in[i];
+    }
+    auto replace = [&](const std::string& from, const std::string& to) {
         size_t pos = 0;
-        while ((pos = s.find(entity, pos)) != std::string::npos) {
-            s.replace(pos, entity.size(), ch);
-            pos += ch.size();
+        while ((pos = out.find(from, pos)) != std::string::npos) {
+            out.replace(pos, from.size(), to);
+            pos += to.size();
         }
+    };
+    replace("&amp;", "&");  replace("&lt;", "<");   replace("&gt;", ">");
+    replace("&quot;", "\""); replace("&#39;", "'"); replace("&nbsp;", " ");
+    std::string cleaned;
+    bool prev_space = true;
+    for (char c : out) {
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            if (!prev_space) cleaned += ' ';
+            prev_space = true;
+        } else { cleaned += c; prev_space = false; }
     }
-    // 数字实体 &#0183; &#1234;
-    std::regex num_ent(R"(&#(\d+);)");
-    std::smatch m;
-    while (std::regex_search(s, m, num_ent)) {
-        int code = std::stoi(m[1].str());
-        std::string ch;
-        if (code < 128) ch = (char)code;
-        else {
-            // UTF-8 encode
-            if (code < 0x800) {
-                ch = (char)(0xC0 | (code >> 6));
-                ch += (char)(0x80 | (code & 0x3F));
-            } else if (code < 0x10000) {
-                ch = (char)(0xE0 | (code >> 12));
-                ch += (char)(0x80 | ((code >> 6) & 0x3F));
-                ch += (char)(0x80 | (code & 0x3F));
-            }
-        }
-        s.replace(m.position(), m.length(), ch);
-    }
-    return s;
+    return cleaned;
 }
 
-// ─── 去除 HTML 标签 ─────────────────────────────────────────
-static std::string strip_tags(const std::string& in) {
-    return std::regex_replace(in, std::regex("<[^>]+>"), "");
+struct EngineConfig {
+    std::string name;
+    std::string host;
+    std::string url_prefix;
+    std::string result_pattern;
+};
+
+static const std::vector<EngineConfig> ENGINES = {
+    {"bing",  "www.bing.com",
+     "https://www.bing.com/search?q=",
+     "<li class=\"b_algo\"[^>]*>.*?<h2>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>.*?<p[^>]*>(.*?)</p>"},
+    {"so360", "www.so.com",
+     "https://www.so.com/s?q=",
+     "<li class=\"res-list\"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>.*?<p class=\"res-desc\"[^>]*>(.*?)</p>"},
+    {"sogou", "www.sogou.com",
+     "https://www.sogou.com/web?query=",
+     "<div class=\"vrwrap\"[^>]*>.*?<h3[^>]*>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>.*?<p class=\"star-wiki\"[^>]*>(.*?)</p>"},
+};
+
+static size_t curl_write_cb(void* ptr, size_t sz, size_t nmemb, void* userdata) {
+    auto* buf = static_cast<std::string*>(userdata);
+    buf->append(static_cast<char*>(ptr), sz * nmemb);
+    return sz * nmemb;
 }
 
-// ─── 清理文本 ───────────────────────────────────────────────
-static std::string clean_text(const std::string& in) {
-    std::string s = strip_tags(in);
-    s = decode_html_entities(s);
-    // 压缩空白
-    s = std::regex_replace(s, std::regex("\\s+"), " ");
-    // trim
-    s.erase(0, s.find_first_not_of(" \t\r\n"));
-    s.erase(s.find_last_not_of(" \t\r\n") + 1);
-    return s;
+// 简单 JSON 错误响应构造（避免 raw string 的转义地狱）
+static std::string err_json(const std::string& msg) {
+    return "{\"error\":\"" + msg + "\"}";
 }
 
 class WebSearchNode : public rclcpp::Node {
 public:
-    WebSearchNode(const rclcpp::NodeOptions& opts = rclcpp::NodeOptions())
-        : Node("web_search_node", opts) {
+    WebSearchNode() : Node("web_search_node") {
+        this->declare_parameter("agent_name", "");
+        this->declare_parameter("info_rate", 1.0);
+        this->declare_parameter("default_timeout", 30.0);
+        this->declare_parameter("cancel_timeout", 5.0);
+        this->declare_parameter("max_results", 10);
 
-        declare_parameter("agent_name", "");
-        declare_parameter("info_rate", 1.0);
-        declare_parameter("default_timeout", 30.0);
-        declare_parameter("max_results", 10);
+        agent_name_ = this->get_parameter("agent_name").as_string();
+        default_timeout_ = this->get_parameter("default_timeout").as_double();
+        max_results_ = this->get_parameter("max_results").as_int();
 
-        agent_name_     = get_parameter("agent_name").as_string();
-        info_rate_      = get_parameter("info_rate").as_double();
-        default_timeout_ = get_parameter("default_timeout").as_double();
-        max_results_    = get_parameter("max_results").as_int();
+        if (agent_name_.empty())
+            throw std::runtime_error("agent_name parameter is required");
 
-        if (agent_name_.empty()) {
-            RCLCPP_FATAL(get_logger(), "agent_name 不能为空");
-            rclcpp::shutdown();
-        }
-
-        curl_global_init(CURL_GLOBAL_DEFAULT);
-
-        std::string topic = "/" + agent_name_ + "/output/web_search/info";
-        rclcpp::QoS qos(1);
-        qos.transient_local();
-        qos.reliable();
-        info_pub_ = create_publisher<std_msgs::msg::String>(topic, qos);
-        info_timer_ = create_wall_timer(
-            std::chrono::milliseconds(static_cast<int>(1000.0 / info_rate_)),
-            [this]() {
-                auto msg = std_msgs::msg::String();
-                msg.data = INFO_JSON;
-                info_pub_->publish(msg);
-            });
+        const char* proxy = std::getenv("HTTPS_PROXY");
+        if (!proxy) proxy = std::getenv("https_proxy");
+        proxy_ = proxy ? std::string(proxy) : "";
 
         action_server_ = rclcpp_action::create_server<ExecuteTool>(
             this, "/" + agent_name_ + "/output/web_search",
-            [](auto...) { return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE; },
-            [](auto...) { return rclcpp_action::CancelResponse::ACCEPT; },
-            [this](auto h) { handle_accepted(h); });
+            [this](const rclcpp_action::GoalUUID&, std::shared_ptr<const ExecuteTool::Goal>) {
+                return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+            },
+            [this](std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>>) {
+                RCLCPP_INFO(this->get_logger(), "cancel requested");
+                cancelled_ = true;
+                return rclcpp_action::CancelResponse::ACCEPT;
+            },
+            [this](std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> h) {
+                execute(h);
+            });
 
-        RCLCPP_INFO(get_logger(), "web_search 启动: agent=%s, max=%d",
-            agent_name_.c_str(), max_results_);
+        RCLCPP_INFO(this->get_logger(), "WebSearchNode ready. agent=%s proxy=%s",
+                    agent_name_.c_str(), proxy_.empty() ? "none" : proxy_.c_str());
     }
-
-    ~WebSearchNode() { curl_global_cleanup(); }
 
 private:
-    static constexpr const char* INFO_JSON = R"json({
-  "type": "function",
-  "function": {
-    "name": "web_search",
-    "description": "网页搜索，返回标题、URL 和摘要。\n\n参数:\n  - query: 搜索查询字符串（必填）\n  - max_results: 最大结果数（可选，默认10，最大20）\n  - source: 搜索引擎（可选，默认 bing）。可选值: bing, auto",
-    "parameters": {
-      "type": "object",
-      "required": ["query"],
-      "properties": {
-        "query": {"type": "string", "description": "搜索查询字符串"},
-        "max_results": {"type": "integer", "description": "最大结果数（默认10，最大20）"},
-        "source": {"type": "string", "description": "搜索引擎: bing（默认）, auto（自动选最快）"}
-      }
-    }
-  }
-})json";
-
-    void handle_accepted(std::shared_ptr<GoalHandleExecute> gh) {
-        auto goal = gh->get_goal();
-        json input;
-        try { input = json::parse(goal->input_json); } catch (...) {
-            fail(gh, R"({"error":"invalid JSON"})"); return;
-        }
-        if (!input.contains("name") || !input["name"].is_string() || input["name"] != "web_search") {
-            fail(gh, R"({"error":"invalid tool name"})"); return;
-        }
-        if (!input.contains("arguments") || !input["arguments"].is_object()) {
-            fail(gh, R"({"error":"missing arguments"})"); return;
-        }
-        if (!input["arguments"].contains("query") || !input["arguments"]["query"].is_string()) {
-            fail(gh, R"({"error":"query is required"})"); return;
-        }
-
-        std::string query = input["arguments"]["query"];
-        int n = max_results_;
-        if (input["arguments"].contains("max_results") && input["arguments"]["max_results"].is_number())
-            n = std::min(input["arguments"]["max_results"].get<int>(), 20);
-
-        std::string source = "bing";
-        if (input["arguments"].contains("source") && input["arguments"]["source"].is_string())
-            source = input["arguments"]["source"];
-
-        double timeout = default_timeout_;
-        if (input["arguments"].contains("timeout_sec") && input["arguments"]["timeout_sec"].is_number()) {
-            double t = input["arguments"]["timeout_sec"].get<double>();
-            if (t > 0) timeout = t;
-        }
-
-        json resp = do_search(query, n, source, timeout);
-
-        auto r = std::make_shared<ExecuteTool::Result>();
-        r->output_json = resp.dump();
-        r->exit_code = resp.contains("error") ? -1 : 0;
-        gh->succeed(r);
-    }
-
-    void fail(std::shared_ptr<GoalHandleExecute> gh, const std::string& msg) {
-        auto r = std::make_shared<ExecuteTool::Result>();
-        r->output_json = msg; r->exit_code = -1;
-        gh->abort(r);
-    }
-
-    // ─── 执行搜索 ───────────────────────────────────────────
-    json do_search(const std::string& query, int n, const std::string& source, double timeout_sec) {
-        // source: "bing" or "auto" — currently only Bing is available
-        CURL* curl = curl_easy_init();
-        if (!curl) return {{"error", "curl init failed"}};
-
-        char* enc = curl_easy_escape(curl, query.c_str(), query.size());
-        std::string url = "https://www.bing.com/search?q=" + std::string(enc) + "&count=" + std::to_string(n);
-        curl_free(enc);
-
-        std::string html;
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &html);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)timeout_sec);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT,
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-
-        CURLcode res = curl_easy_perform(curl);
-        curl_easy_cleanup(curl);
-
-        if (res != CURLE_OK)
-            return {{"error", std::string("curl: ") + curl_easy_strerror(res)}};
-
-        return parse_results(html, n);
-    }
-
-    // ─── 解析 Bing HTML ────────────────────────────────────
-    json parse_results(const std::string& html, int n) {
-        json results = json::array();
-        try {
-            std::regex block_re(R"(<li class=\"b_algo\"[^>]*>(.*?)</li>)",
-                std::regex::icase | std::regex::optimize);
-            std::regex h2_re(R"(<h2[^>]*>(.*?)</h2>)", std::regex::icase);
-            std::regex link_re(R"(<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>)", std::regex::icase);
-            std::regex snip_re(R"(<p[^>]*>(.*?)</p>)", std::regex::icase);
-
-            auto it = std::sregex_iterator(html.begin(), html.end(), block_re);
-            auto end = std::sregex_iterator();
-
-            for (; it != end && (int)results.size() < n; ++it) {
-                std::string block = (*it)[1].str();
-
-                // 从 h2 提取标题 (不是 favicon 的 a 标签)
-                std::smatch h2m;
-                if (!std::regex_search(block, h2m, h2_re)) continue;
-                std::string h2_content = h2m[1].str();
-
-                std::smatch lm;
-                if (!std::regex_search(h2_content, lm, link_re)) continue;
-                std::string url = lm[1].str();
-                std::string title = clean_text(lm[2].str());
-
-                // 摘要
-                std::smatch sm;
-                std::string snippet;
-                if (std::regex_search(block, sm, snip_re))
-                    snippet = clean_text(sm[1].str());
-
-                if (!url.empty() && !title.empty()) {
-                    results.push_back({
-                        {"title", title},
-                        {"url", url},
-                        {"snippet", snippet}
-                    });
-                }
-            }
-        } catch (const std::exception& e) {
-            RCLCPP_WARN(get_logger(), "parse error: %s", e.what());
-        }
-
-        if (results.empty())
-            return {{"error", "no results"}, {"results", json::array()}};
-        return {{"results", results}, {"count", results.size()}};
-    }
-
     std::string agent_name_;
-    double info_rate_, default_timeout_;
+    double default_timeout_;
     int max_results_;
-    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr info_pub_;
-    rclcpp::TimerBase::SharedPtr info_timer_;
+    std::string proxy_;
+    std::atomic<bool> cancelled_{false};
     rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
+
+    static int check_latency_ms(const std::string& host, const std::string& proxy) {
+        CURL* c = curl_easy_init();
+        if (!c) return -1;
+        std::string url = "https://" + host + "/";
+        curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(c, CURLOPT_NOBODY, 1L);
+        curl_easy_setopt(c, CURLOPT_TIMEOUT, 5L);
+        curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 3L);
+        curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+        if (!proxy.empty()) curl_easy_setopt(c, CURLOPT_PROXY, proxy.c_str());
+        CURLcode res = curl_easy_perform(c);
+        long http_code = 0;
+        curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
+        double total = 0;
+        curl_easy_getinfo(c, CURLINFO_TOTAL_TIME, &total);
+        curl_easy_cleanup(c);
+        return (res == CURLE_OK && http_code > 0 && http_code < 500)
+            ? static_cast<int>(total * 1000) : -1;
+    }
+
+    int select_engine(const std::string& source) {
+        if (source == "auto") {
+            int best_idx = 0, best_lat = 999999;
+            for (size_t i = 0; i < ENGINES.size(); ++i) {
+                int lat = check_latency_ms(ENGINES[i].host, proxy_);
+                RCLCPP_INFO(this->get_logger(), "engine=%s latency=%dms",
+                            ENGINES[i].name.c_str(), lat);
+                if (lat >= 0 && lat < best_lat) { best_lat = lat; best_idx = i; }
+            }
+            RCLCPP_INFO(this->get_logger(), "auto selected engine=%s (%dms)",
+                        ENGINES[best_idx].name.c_str(), best_lat);
+            return best_idx;
+        }
+        for (size_t i = 0; i < ENGINES.size(); ++i)
+            if (ENGINES[i].name == source) return i;
+        return 0;
+    }
+
+    json do_search(const EngineConfig& eng, const std::string& query,
+                   int max_r, int timeout_s) {
+        json result;
+        result["results"] = json::array();
+        result["count"] = 0;
+
+        CURL* c = curl_easy_init();
+        if (!c) { result["error"] = "curl init failed"; return result; }
+
+        std::string url = eng.url_prefix;
+        char* esc = curl_easy_escape(c, query.c_str(), query.size());
+        url += esc; curl_free(esc);
+
+        std::string body;
+        curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_cb);
+        curl_easy_setopt(c, CURLOPT_WRITEDATA, &body);
+        curl_easy_setopt(c, CURLOPT_TIMEOUT, static_cast<long>(timeout_s));
+        curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
+        curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(c, CURLOPT_USERAGENT,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+        if (!proxy_.empty()) curl_easy_setopt(c, CURLOPT_PROXY, proxy_.c_str());
+
+        CURLcode rc = curl_easy_perform(c);
+        long http_code = 0;
+        curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
+        curl_easy_cleanup(c);
+
+        if (rc != CURLE_OK) {
+            result["error"] = std::string("curl: ") + curl_easy_strerror(rc);
+            return result;
+        }
+        if (http_code != 200) {
+            result["error"] = "HTTP " + std::to_string(http_code);
+            return result;
+        }
+
+        std::regex re(eng.result_pattern, std::regex::icase);
+        auto it = std::sregex_iterator(body.begin(), body.end(), re);
+        auto end = std::sregex_iterator();
+        for (int k = 0; it != end && k < max_r; ++it, ++k) {
+            auto& m = *it;
+            if (m.size() < 4) continue;
+            json item;
+            item["url"]     = m[1].str();
+            item["title"]   = strip_html(m[2].str());
+            item["snippet"] = strip_html(m[3].str());
+            result["results"].push_back(item);
+        }
+        result["count"] = result["results"].size();
+        return result;
+    }
+
+    void execute(std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> handle) {
+        cancelled_ = false;
+        auto goal = handle->get_goal();
+        auto result = std::make_shared<ExecuteTool::Result>();
+
+        // 解析 input_json: {"name":"web_search","arguments":{...}}
+        json input;
+        try {
+            input = json::parse(goal->input_json);
+        } catch (...) {
+            result->output_json = err_json("invalid input JSON");
+            handle->succeed(result);
+            return;
+        }
+
+        if (!input.contains("arguments") || !input["arguments"].is_object()) {
+            result->output_json = err_json("missing arguments");
+            handle->succeed(result);
+            return;
+        }
+
+        auto& args = input["arguments"];
+        if (!args.contains("query") || !args["query"].is_string()) {
+            result->output_json = err_json("missing query");
+            handle->succeed(result);
+            return;
+        }
+
+        std::string query   = args["query"];
+        int    max_r    = args.value("max_results", max_results_);
+        std::string source = args.value("source", "auto");
+        int    timeout_s = args.value("timeout_sec", static_cast<int>(default_timeout_));
+
+        RCLCPP_INFO(this->get_logger(), "search query='%s' engine=%s max=%d timeout=%d",
+                    query.c_str(), source.c_str(), max_r, timeout_s);
+
+        int ei = select_engine(source);
+        const auto& eng = ENGINES[ei];
+
+        auto safe_handle = handle;
+        auto safe_result = result;
+        std::thread([=, this]() {
+            auto t0 = std::chrono::steady_clock::now();
+            json res = do_search(eng, query, max_r, timeout_s);
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+
+            if (cancelled_) {
+                auto ar = std::make_shared<ExecuteTool::Result>();
+                ar->output_json = err_json("cancelled");
+                safe_handle->abort(ar);
+                return;
+            }
+
+            safe_result->output_json = res.dump();
+            safe_result->exit_code = res.contains("error") ? 1 : 0;
+            RCLCPP_INFO(this->get_logger(), "done in %ldms results=%d engine=%s",
+                        ms, res.value("count", 0), eng.name.c_str());
+            safe_handle->succeed(safe_result);
+        }).detach();
+    }
 };
 
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<WebSearchNode>());
+    try {
+        rclcpp::spin(std::make_shared<WebSearchNode>());
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(rclcpp::get_logger("web_search_node"), "Fatal: %s", e.what());
+        return 1;
+    }
     rclcpp::shutdown();
     return 0;
 }
