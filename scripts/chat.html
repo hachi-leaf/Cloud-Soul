@@ -410,7 +410,7 @@ body {
 .fi { font-size: 20px; flex-shrink: 0; line-height: 1; }
 .up-chip .fi { font-size: 16px; }
 
-.fi{font-size:20px;flex-shrink:0;line-height:1}.up-chip .fi{font-size:16px}
+.fi{font-size:20px;flex-shrink:0;line-height:1;font-variation-settings:"FILL"0,"wght"400,"GRAD"0,"opsz"20}.up-chip .fi{font-size:16px}
 </style>
 </head>
 <body>
@@ -470,7 +470,7 @@ banner.appendChild(langSpan);banner.appendChild(copyBtn);wrap.appendChild(banner
 function highlightCode(el){el.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b)}catch(e){}});wrapCodeBlocks(el);}
 
 
-function fileIcon(name){const ext=(name||'').split('.').pop().toLowerCase();const map={pdf:'📄',doc:'📝',docx:'📝',txt:'📃',md:'📃',py:'💻',js:'💻',ts:'💻',cpp:'💻',c:'💻',h:'💻',hpp:'💻',rs:'💻',go:'💻',java:'💻',zip:'📦',tar:'📦',gz:'📦',rar:'📦','7z':'📦',png:'🖼️',jpg:'🖼️',jpeg:'🖼️',gif:'🖼️',svg:'🖼️',webp:'🖼️',mp3:'🎵',wav:'🎵',ogg:'🎵',flac:'🎵',mp4:'🎬',mov:'🎬',avi:'🎬',mkv:'🎬',xls:'📊',xlsx:'📊',csv:'📊',ppt:'📑',pptx:'📑',html:'🌐',css:'🌐',json:'⚙️',yaml:'⚙️',yml:'⚙️',xml:'⚙️',toml:'⚙️',ini:'⚙️',cfg:'⚙️',conf:'⚙️',sh:'💻',bash:'💻',zsh:'💻',fish:'💻',ps1:'💻',bat:'💻',cmake:'⚙️',makefile:'⚙️',dockerfile:'🐳',sql:'🗄️',db:'🗄️',sqlite:'🗄️',log:'📋',lock:'🔒','3mf':'🖨️',stl:'🖨️',obj:'🖨️',step:'🖨️',stp:'🖨️',igs:'🖨️',iges:'🖨️'};return map[ext]||'📎';}
+function fileIcon(name){const ext=(name||'').split('.').pop().toLowerCase();const map={pdf:'picture_as_pdf',doc:'description',docx:'description',txt:'article',md:'article',py:'code',js:'code',ts:'code',cpp:'code',c:'code',h:'code',hpp:'code',rs:'code',go:'code',java:'code',zip:'folder_zip',tar:'folder_zip',gz:'folder_zip',rar:'folder_zip','7z':'folder_zip',png:'image',jpg:'image',jpeg:'image',gif:'image',svg:'image',webp:'image',mp3:'audio_file',wav:'audio_file',ogg:'audio_file',flac:'audio_file',mp4:'video_file',mov:'video_file',avi:'video_file',mkv:'video_file',xls:'table',xlsx:'table',csv:'table',ppt:'slideshow',pptx:'slideshow',html:'language',css:'language',json:'data_object',yaml:'data_object',yml:'data_object',xml:'data_object',toml:'data_object',ini:'data_object',cfg:'data_object',conf:'data_object',sh:'terminal',bash:'terminal',zsh:'terminal',fish:'terminal',ps1:'terminal',bat:'terminal',cmake:'data_object',makefile:'data_object',dockerfile:'deployed_code',sql:'storage',db:'storage',sqlite:'storage',log:'feed',lock:'lock','3mf':'view_in_ar',stl:'view_in_ar',obj:'view_in_ar',step:'view_in_ar',stp:'view_in_ar',igs:'view_in_ar',iges:'view_in_ar'};return map[ext]||'attach_file';}
 function szf(sz){if(sz>=1048576)return(sz/1048576).toFixed(1)+' MB';if(sz>=1024)return(sz/1024).toFixed(1)+' KB';return sz+' B';}
 
 function am(text,role,files,ts_server){
@@ -478,7 +478,7 @@ function am(text,role,files,ts_server){
   const row=document.createElement('div');row.className='msg-row '+role;
   if(files&&files.length)text=text.replace(/\n\[附件:.*\]$/,'');
   let html=role==='user'?text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'):marked.parse(text||''),filesHtml='';
-  if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class=\"fchip\"><span class=\"fi\">'+fileIcon(nm)+'</span><div class=\"fc\"><span class=\"fn\">'+nm+'</span><span class=\"fs\">'+sz+'</span></div></div>';});}
+  if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class=\"fchip\"><span class=\"fi material-symbols-outlined\">'+fileIcon(nm)+'</span><div class=\"fc\"><span class=\"fn\">'+nm+'</span><span class=\"fs\">'+sz+'</span></div></div>';});}
   const ts=ts_server||new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
   row.innerHTML=avaHTML(role)+'<div class=\"msg-body\"><div class=\"bub\">'+html+'</div>'+(filesHtml?'<div class=\"attaches\">'+filesHtml+'</div>':'')+'<div class=\"time\">'+ts+'</div></div>';
   mi.appendChild(row);highlightCode(row);ms.scrollTop=ms.scrollHeight;
@@ -514,7 +514,7 @@ async function sm(){
 }
 
 function renderUpbar(){
-  let h='';selFiles.forEach((f,i)=>{const sz=szf(f.file.size);const cls=f.status==='err'?' style=\"color:#ea4335\"':'';h+='<div class=\"up-chip\"><span class=\"fi\">'+fileIcon(f.file.name)+'</span><span class=\"c-name\" title=\"'+f.file.name.replace(/\"/g,'&quot;')+'\">'+f.file.name.replace(/</g,'&lt;')+'</span><span>'+sz+'</span><span class=\"rm\" onclick=\"selFiles.splice('+i+',1);renderUpbar();ar()\">&times;</span></div>';});
+  let h='';selFiles.forEach((f,i)=>{const sz=szf(f.file.size);const cls=f.status==='err'?' style=\"color:#ea4335\"':'';h+='<div class=\"up-chip\"><span class=\"fi material-symbols-outlined\">'+fileIcon(f.file.name)+'</span><span class=\"c-name\" title=\"'+f.file.name.replace(/\"/g,'&quot;')+'\">'+f.file.name.replace(/</g,'&lt;')+'</span><span>'+sz+'</span><span class=\"rm\" onclick=\"selFiles.splice('+i+',1);renderUpbar();ar()\">&times;</span></div>';});
   ub.innerHTML=h;
 }
 async function uploadAll(){
