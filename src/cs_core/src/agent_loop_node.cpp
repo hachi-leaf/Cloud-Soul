@@ -162,17 +162,8 @@ public:
                 create_new_json_file();
                 save_current_json();
 
-                // 压缩后立即调用一次 LLM，更新 token 计数
-                json tools = fetch_current_tools();
-                int input_tokens = -1;
-                json reply = call_llm_raw(tools, &input_tokens);
-                current_input_tokens_ = input_tokens;
-                if (!reply.is_null()) {
-                    msg_history_.push_back(reply);
-                    save_current_json();
-                }
-                RCLCPP_INFO(get_logger(), "压缩后 token 更新: %d", current_input_tokens_);
-
+                // 压缩后不立即调用 LLM，token 计为 0，让主循环自然处理
+                current_input_tokens_ = 0;
                 RCLCPP_INFO(get_logger(), "压缩完成，新消息数: %zu", msg_history_.size());
                 continue;
             } else {
