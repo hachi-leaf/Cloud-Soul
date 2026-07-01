@@ -1,45 +1,82 @@
 // Copyright (c) leaf
 // SPDX-License-Identifier: MIT
-//
-// web_fetch_node — 抓取网页全文 (libcurl + HTML 转纯文本)
 
+// ================================================================
+// Cloud-Soul Web 页面抓取工具节点
+// ================================================================
+//
+// 作用:
+//   抓取指定 URL 的网页全文，剥离 HTML 标签/脚本/样式，提取纯文本。
+//   线程化执行，支持取消和超时。
+//
+// 节点名: /<agent_name>/web_fetch_node
+//
+// 参数:
+//   agent_name       (string, 必填)  Agent 命名空间
+//   info_rate         (double, 1.0)  发布 Tools Info 的频率（Hz）
+//   default_timeout   (double, 30.0)  默认超时秒数
+//   max_size_mb       (int, 5)       最大下载文件大小（MB）
+//
+// Action:
+//   /<agent_name>/output/web_fetch  (ExecuteTool)
+//     Goal: 接收 {"name":"web_fetch","arguments":{"url":"...","timeout_sec":30}}
+//     Result: output_json 为 {"url":...,"size":...,"text":"..."}
+//     Cancel: 终止正在进行的 HTTP 请求
+//
+// 上层传入 JSON 规范 (来自 output_mgmt):
+//   output_mgmt 透传以下 JSON 给本节点:
+//   {
+//     "name": "web_fetch",
+//     "arguments": {
+//       "url": "https://...",               // 必填，目标 URL
+//       "timeout_sec": 30                    // 可选，超时秒数
+//     }
+//   }
+//
+// 关键设计:
+//   - 线程化执行，支持取消
+//   - 全链路无 std::regex（避免栈溢出）
+//   - HTML 实体解码 + UTF-8 清洗
+//   - 返回文本限制 500KB，保护 LLM 上下文
+//
+
+#include <curl/curl.h>
+#include <thread>
+#include <atomic>
+#include <chrono>
+#include <sstream>
+#include <cstdlib>
+#include <cstring>
+#include <nlohmann/json.hpp>
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
-#include "std_msgs/msg/string.hpp"
 #include "cs_interfaces/action/execute_tool.hpp"
-
-#include <nlohmann/json.hpp>
-#include <curl/curl.h>
-#include <regex>
-#include <sstream>
+#include <std_msgs/msg/string.hpp>
 
 using json = nlohmann::json;
 using ExecuteTool = cs_interfaces::action::ExecuteTool;
+using namespace std::chrono_literals;
 
-static size_t write_cb(void* contents, size_t size, size_t nmemb, std::string* out) {
-    out->append((char*)contents, size * nmemb);
-    return size * nmemb;
-}
-
-
-// UTF-8 清理：替换无效字节（nlohmann::json::dump 要求严格 UTF-8）
+// ============================================================
+// UTF-8 清洗（移除无效字节序列）
+// ============================================================
 static std::string sanitize_utf8(const std::string& in) {
     std::string out;
     out.reserve(in.size());
     for (size_t i = 0; i < in.size(); ) {
         unsigned char c = in[i];
-        if (c < 0x80) { out += c; i++; }                    // ASCII
-        else if (c < 0xC0) { out += '?'; i++; }             // 非法续字节
-        else if (c < 0xE0) {                                 // 2字节
+        if (c < 0x80) { out += c; i++; }
+        else if (c < 0xC0) { out += '?'; i++; }
+        else if (c < 0xE0) {
             if (i+1 < in.size() && (in[i+1] & 0xC0) == 0x80) { out += c; out += in[i+1]; }
             else out += '?';
             i += 2;
-        } else if (c < 0xF0) {                               // 3字节
+        } else if (c < 0xF0) {
             if (i+2 < in.size() && (in[i+1] & 0xC0) == 0x80 && (in[i+2] & 0xC0) == 0x80) {
                 out += c; out += in[i+1]; out += in[i+2];
             } else out += '?';
             i += 3;
-        } else if (c < 0xF8) {                               // 4字节
+        } else if (c < 0xF8) {
             if (i+3 < in.size() && (in[i+1] & 0xC0) == 0x80 && (in[i+2] & 0xC0) == 0x80 && (in[i+3] & 0xC0) == 0x80) {
                 out += c; out += in[i+1]; out += in[i+2]; out += in[i+3];
             } else out += '?';
@@ -49,32 +86,28 @@ static std::string sanitize_utf8(const std::string& in) {
     return out;
 }
 
-// HTML 实体解码（与 web_search 共用逻辑）
+// ============================================================
+// HTML 实体解码（去 regex，纯手动扫描）
+// ============================================================
 static std::string decode_html_entities(const std::string& in) {
-    // 命名的实体（无递归，O(n)）
-    static const std::vector<std::pair<std::string, std::string>> ents = {
+    static const std::pair<const char*, const char*> ents[] = {
         {"&ensp;", " "}, {"&emsp;", " "}, {"&nbsp;", " "},
         {"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"},
         {"&quot;", "\""}, {"&apos;", "'"}, {"&middot;", "\xc2\xb7"},
         {"&bull;", "\xe2\x80\xa2"}, {"&ndash;", "\xe2\x80\x93"}, {"&mdash;", "\xe2\x80\x94"},
     };
-    std::string out;
-    out.reserve(in.size());
+    std::string out; out.reserve(in.size());
     size_t i = 0;
     while (i < in.size()) {
         if (in[i] != '&' || i + 2 >= in.size()) { out += in[i]; i++; continue; }
-        // 检查命名实体
         bool matched = false;
         for (const auto& [ent, ch] : ents) {
-            if (in.compare(i, ent.size(), ent) == 0) {
-                out += ch;
-                i += ent.size();
-                matched = true;
-                break;
+            size_t len = std::strlen(ent);
+            if (in.compare(i, len, ent) == 0) {
+                out += ch; i += len; matched = true; break;
             }
         }
         if (matched) continue;
-        // 检查数字实体 &#NNN;
         if (in[i+1] == '#' && i + 3 < in.size()) {
             size_t j = i + 2;
             while (j < in.size() && in[j] >= '0' && in[j] <= '9') j++;
@@ -90,39 +123,35 @@ static std::string decode_html_entities(const std::string& in) {
                     out += (char)(0x80 | ((code >> 6) & 0x3F));
                     out += (char)(0x80 | (code & 0x3F));
                 }
-                i = j + 1;
-                continue;
+                i = j + 1; continue;
             }
         }
-        out += in[i];
-        i++;
+        out += in[i]; i++;
     }
     return out;
 }
 
-// 去除 HTML 标签 — 手动跳过 <...> ，避免 regex 栈溢出
+// ============================================================
+// 去除 HTML 标签（跳过 <...>）
+// ============================================================
 static std::string strip_tags(const std::string& in) {
-    std::string out;
-    out.reserve(in.size());
+    std::string out; out.reserve(in.size());
     for (size_t i = 0; i < in.size(); i++) {
-        if (in[i] == '<') {
-            while (i < in.size() && in[i] != '>') i++;
-            continue; // 跳过整个标签
-        }
+        if (in[i] == '<') { while (i < in.size() && in[i] != '>') i++; continue; }
         out += in[i];
     }
     return out;
 }
 
-// 去除脚本、样式块和 HTML 注释 — 手动状态机，避免 std::regex 栈溢出
+// ============================================================
+// 去除脚本、样式块和 HTML 注释（状态机，无 regex）
+// ============================================================
 static std::string strip_blocks(const std::string& in) {
-    // 大小写不敏感的字符串搜索辅助
     auto icase_find = [&](size_t start, const std::string& needle) -> size_t {
         for (size_t i = start; i + needle.size() <= in.size(); i++) {
             bool ok = true;
             for (size_t j = 0; j < needle.size(); j++) {
-                char c = in[i + j];
-                char n = needle[j];
+                char c = in[i + j], n = needle[j];
                 if (c != n && c != (n ^ 0x20)) { ok = false; break; }
             }
             if (ok) return i;
@@ -130,13 +159,10 @@ static std::string strip_blocks(const std::string& in) {
         return std::string::npos;
     };
 
-    std::string out;
-    out.reserve(in.size());
+    std::string out; out.reserve(in.size());
     size_t i = 0;
     while (i < in.size()) {
         if (in[i] != '<') { out += in[i]; i++; continue; }
-
-        // 尝试匹配 <script ...> ... </script>
         if (i + 7 < in.size()) {
             const char* p = in.c_str() + i + 1;
             if ((p[0]=='s'||p[0]=='S') && (p[1]=='c'||p[1]=='C') && (p[2]=='r'||p[2]=='R') &&
@@ -144,14 +170,12 @@ static std::string strip_blocks(const std::string& in) {
                 size_t j = i + 7;
                 while (j < in.size() && in[j] != '>') j++;
                 if (j < in.size()) {
-                    j++; // 跳过 >
+                    j++;
                     size_t close = icase_find(j, "</script>");
                     if (close != std::string::npos) { i = close + 9; continue; }
                 }
             }
         }
-
-        // 尝试匹配 <style ...> ... </style>
         if (i + 6 < in.size()) {
             const char* p = in.c_str() + i + 1;
             if ((p[0]=='s'||p[0]=='S') && (p[1]=='t'||p[1]=='T') && (p[2]=='y'||p[2]=='Y') &&
@@ -165,38 +189,132 @@ static std::string strip_blocks(const std::string& in) {
                 }
             }
         }
-
-        // 尝试匹配 HTML 注释 <!-- ... -->
         if (i + 3 < in.size() && in[i+1]=='!' && in[i+2]=='-' && in[i+3]=='-') {
             size_t close = in.find("-->", i + 4);
             if (close != std::string::npos) { i = close + 3; continue; }
         }
-
-        out += in[i];
-        i++;
+        out += in[i]; i++;
     }
     return out;
 }
 
+// ============================================================
+// HTML → 纯文本（纯函数，在 worker 线程中调用）
+// ============================================================
+static json extract_text(const std::string& html, const std::string& final_url,
+                         const std::string& orig_url) {
+    std::string clean = strip_blocks(html);
+    clean = strip_tags(clean);
+    clean = decode_html_entities(clean);
+
+    // 压缩空白行：手动折叠
+    {
+        std::string tmp; tmp.reserve(clean.size());
+        int nl = 0;
+        for (char c : clean) {
+            if (c == '\n') { nl++; }
+            else {
+                if (nl > 2) tmp.append("\n\n");
+                else if (nl > 0) tmp.append(nl, '\n');
+                nl = 0; tmp += c;
+            }
+        }
+        if (nl > 2) tmp.append("\n\n");
+        else if (nl > 0) tmp.append(nl, '\n');
+        clean = std::move(tmp);
+    }
+    // 压缩行内空白
+    {
+        std::string tmp; tmp.reserve(clean.size());
+        int sp = 0;
+        for (char c : clean) {
+            if (c == ' ' || c == '\t') { sp++; }
+            else { if (sp > 0) { tmp += ' '; sp = 0; } tmp += c; }
+        }
+        clean = std::move(tmp);
+    }
+    // Trim
+    clean.erase(0, clean.find_first_not_of(" \t\r\n"));
+    clean.erase(clean.find_last_not_of(" \t\r\n") + 1);
+    // UTF-8 清洗
+    clean = sanitize_utf8(clean);
+
+    const size_t max_return = 500 * 1024;
+    std::string body = clean;
+    if (clean.size() > max_return) {
+        body = clean.substr(0, max_return);
+        body += "\n\n[截断：" + std::to_string(clean.size() / 1024) + " KB，仅返回前 "
+             + std::to_string(max_return / 1024) + " KB]";
+    }
+    return {{"url", orig_url}, {"size", clean.size()}, {"text", body}};
+}
+
+// ============================================================
+// libcurl 回调
+// ============================================================
+static size_t curl_write_cb(void* ptr, size_t sz, size_t nmemb, void* userdata) {
+    auto* buf = static_cast<std::string*>(userdata);
+    buf->append(static_cast<char*>(ptr), sz * nmemb);
+    return sz * nmemb;
+}
+
+// ============================================================
+// HTTP 抓取纯函数
+// ============================================================
+static json do_fetch(const std::string& url, int timeout_s, size_t max_size_bytes) {
+    CURL* c = curl_easy_init();
+    if (!c) return {{"error", "curl init failed"}};
+
+    std::string html;
+    html.reserve(1024 * 1024);
+    curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &html);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, static_cast<long>(timeout_s));
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(c, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(c, CURLOPT_USERAGENT,
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36");
+    curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "gzip, deflate");
+    curl_easy_setopt(c, CURLOPT_MAXFILESIZE_LARGE, static_cast<curl_off_t>(max_size_bytes));
+
+    CURLcode rc = curl_easy_perform(c);
+    long http_code = 0;
+    char* effective_url = nullptr;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
+    curl_easy_getinfo(c, CURLINFO_EFFECTIVE_URL, &effective_url);
+    std::string final_url = effective_url ? effective_url : url;
+    curl_easy_cleanup(c);
+
+    if (rc != CURLE_OK) {
+        std::string err = "curl: " + std::string(curl_easy_strerror(rc));
+        if (rc == CURLE_FILESIZE_EXCEEDED) err += " (max_size exceeded)";
+        return {{"error", err}};
+    }
+    if (http_code != 200)
+        return {{"error", "HTTP " + std::to_string(http_code)}};
+
+    return extract_text(html, final_url, url);
+}
+
+// ============================================================
+// WebFetchNode
+// ============================================================
 class WebFetchNode : public rclcpp::Node {
 public:
-    WebFetchNode(const rclcpp::NodeOptions& opts = rclcpp::NodeOptions())
-        : Node("web_fetch_node", opts) {
-
-        declare_parameter("agent_name", "");
+    explicit WebFetchNode(const std::string& agent_name)
+        : Node("web_fetch_node", agent_name), agent_name_(agent_name)
+    {
+        declare_parameter("agent_name", agent_name);
         declare_parameter("info_rate", 1.0);
         declare_parameter("default_timeout", 30.0);
         declare_parameter("max_size_mb", 5);
 
-        agent_name_     = get_parameter("agent_name").as_string();
-        info_rate_      = get_parameter("info_rate").as_double();
+        info_rate_       = get_parameter("info_rate").as_double();
         default_timeout_ = get_parameter("default_timeout").as_double();
-        max_size_bytes_ = get_parameter("max_size_mb").as_int() * 1024 * 1024;
-
-        if (agent_name_.empty()) {
-            RCLCPP_FATAL(get_logger(), "agent_name 不能为空");
-            rclcpp::shutdown();
-        }
+        max_size_bytes_  = get_parameter("max_size_mb").as_int() * 1024 * 1024;
 
         curl_global_init(CURL_GLOBAL_DEFAULT);
 
@@ -214,16 +332,23 @@ public:
             });
 
         action_server_ = rclcpp_action::create_server<ExecuteTool>(
-            this, "/" + agent_name_ + "/output/web_fetch",
-            [](auto...) { return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE; },
-            [](auto...) { return rclcpp_action::CancelResponse::ACCEPT; },
-            [this](auto h) { handle_accepted(h); });
+            this,
+            "/" + agent_name_ + "/output/web_fetch",
+            // handle_goal
+            [](const rclcpp_action::GoalUUID&,
+               std::shared_ptr<const ExecuteTool::Goal>) {
+                return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+            },
+            // handle_cancel
+            [this](auto goal_handle) { return handle_cancel(goal_handle); },
+            // handle_accepted
+            [this](auto goal_handle) { handle_accepted(goal_handle); });
 
-        RCLCPP_INFO(get_logger(), "web_fetch 启动: agent=%s, max_size=%dMB",
-            agent_name_.c_str(), (int)(max_size_bytes_ / (1024*1024)));
+        RCLCPP_INFO(get_logger(), "WebFetchNode ready. agent=%s max_size=%dMB",
+                    agent_name_.c_str(), static_cast<int>(max_size_bytes_ / (1024*1024)));
     }
 
-    ~WebFetchNode() { curl_global_cleanup(); }
+    ~WebFetchNode() override { curl_global_cleanup(); }
 
 private:
     static constexpr const char* INFO_JSON = R"json({
@@ -242,154 +367,111 @@ private:
   }
 })json";
 
-    void handle_accepted(std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> gh) {
-        auto goal = gh->get_goal();
-        json input;
-        try { input = json::parse(goal->input_json); } catch (...) {
-            fail(gh, R"({"error":"invalid JSON"})"); return;
-        }
-        if (!input.contains("name") || !input["name"].is_string() || input["name"] != "web_fetch") {
-            fail(gh, R"({"error":"invalid tool name"})"); return;
-        }
-        if (!input.contains("arguments") || !input["arguments"].is_object()) {
-            fail(gh, R"({"error":"missing arguments"})"); return;
-        }
-        if (!input["arguments"].contains("url") || !input["arguments"]["url"].is_string()) {
-            fail(gh, R"({"error":"url is required"})"); return;
-        }
-
-        std::string url = input["arguments"]["url"];
-        double timeout = default_timeout_;
-        if (input["arguments"].contains("timeout_sec") && input["arguments"]["timeout_sec"].is_number()) {
-            double t = input["arguments"]["timeout_sec"].get<double>();
-            if (t > 0) timeout = t;
-        }
-
-        RCLCPP_INFO(get_logger(), "Fetching: %s", url.substr(0, 80).c_str());
-        json resp = do_fetch(url, timeout);
-
-        auto r = std::make_shared<ExecuteTool::Result>();
-        r->output_json = resp.dump();
-        r->exit_code = resp.contains("error") ? -1 : 0;
-        gh->succeed(r);
-    }
-
-    void fail(std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> gh, const std::string& msg) {
-        auto r = std::make_shared<ExecuteTool::Result>();
-        r->output_json = msg; r->exit_code = -1;
-        gh->abort(r);
-    }
-
-    json do_fetch(const std::string& url, double timeout_sec) {
-        CURL* curl = curl_easy_init();
-        if (!curl) return {{"error", "curl init failed"}};
-
-        std::string html;
-        html.reserve(1024 * 1024); // 预分配 1MB
-
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &html);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)timeout_sec);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT,
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "gzip, deflate");
-        curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)max_size_bytes_);
-
-        CURLcode res = curl_easy_perform(curl);
-
-        long http_code = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-        char* final_url = nullptr;
-        curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &final_url);
-        curl_easy_cleanup(curl);
-
-        if (res != CURLE_OK) {
-            std::string err = "curl: " + std::string(curl_easy_strerror(res));
-            if (res == CURLE_FILESIZE_EXCEEDED)
-                err += " (max_size exceeded)";
-            return {{"error", err}};
-        }
-
-        if (http_code != 200) {
-            return {{"error", "HTTP " + std::to_string(http_code)}};
-        }
-
-        return extract_text(html, final_url ? final_url : url, url);
-    }
-
-    json extract_text(const std::string& html, const std::string& final_url, const std::string& orig_url) {
-        std::string clean = strip_blocks(html);
-        clean = strip_tags(clean);
-        clean = decode_html_entities(clean);
-
-        // 压缩空白行：手动折叠多个连续换行 → 最多两个
-        {
-            std::string tmp; tmp.reserve(clean.size());
-            int nl_count = 0;
-            for (char c : clean) {
-                if (c == '\n') { nl_count++; }
-                else {
-                    if (nl_count > 2) { tmp.append("\n\n"); }
-                    else if (nl_count > 0) { tmp.append(nl_count, '\n'); }
-                    nl_count = 0;
-                    tmp += c;
-                }
-            }
-            if (nl_count > 2) tmp.append("\n\n");
-            else if (nl_count > 0) tmp.append(nl_count, '\n');
-            clean = std::move(tmp);
-        }
-        // 压缩行内空白（空格/制表符）：连续 → 单个
-        {
-            std::string tmp; tmp.reserve(clean.size());
-            int sp_count = 0;
-            for (char c : clean) {
-                if (c == ' ' || c == '\t') { sp_count++; }
-                else {
-                    if (sp_count > 0) { tmp += ' '; sp_count = 0; }
-                    tmp += c;
-                }
-            }
-            clean = std::move(tmp);
-        }
-        // trim 首尾
-        clean.erase(0, clean.find_first_not_of(" \t\r\n"));
-        clean.erase(clean.find_last_not_of(" \t\r\n") + 1);
-
-        // UTF-8 清洗（防 nlohmann::json::dump 崩溃）
-        clean = sanitize_utf8(clean);
-
-        // 限制返回大小（最多 500KB，保护 LLM 上下文）
-        const size_t max_return = 500 * 1024;
-        std::string body = clean;
-        if (clean.size() > max_return) {
-            body = clean.substr(0, max_return);
-            body += "\n\n[截断：" + std::to_string(clean.size() / 1024) + " KB，仅返回前 "
-                 + std::to_string(max_return / 1024) + " KB]";
-        }
-
-        return {
-            {"url", orig_url},
-            {"size", clean.size()},
-            {"text", body}
-        };
-    }
-
     std::string agent_name_;
     double info_rate_, default_timeout_;
     size_t max_size_bytes_;
+    std::atomic<bool> canceled_{false};
+    std::thread work_thread_;
+
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr info_pub_;
     rclcpp::TimerBase::SharedPtr info_timer_;
     rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
+
+    // ---------------------------------------------------------
+    // handle_cancel — 设置 canceled_ 标志
+    // ---------------------------------------------------------
+    rclcpp_action::CancelResponse handle_cancel(
+        const std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>>)
+    {
+        RCLCPP_INFO(get_logger(), "handle_cancel: Cancel requested");
+        canceled_.store(true);
+        return rclcpp_action::CancelResponse::ACCEPT;
+    }
+
+    // ---------------------------------------------------------
+    // handle_accepted — 验证输入后在线程中执行抓取
+    // ---------------------------------------------------------
+    void handle_accepted(
+        const std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> goal_handle)
+    {
+        const auto goal = goal_handle->get_goal();
+        auto result = std::make_shared<ExecuteTool::Result>();
+
+        json input;
+        try {
+            input = json::parse(goal->input_json);
+        } catch (...) {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Failed to parse input JSON");
+            result->output_json = "{\"error\":\"invalid input JSON\"}";
+            result->exit_code = 1;
+            goal_handle->abort(result);
+            return;
+        }
+
+        if (!input.contains("arguments") || !input["arguments"].is_object()) {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Missing arguments");
+            result->output_json = "{\"error\":\"invalid input: missing arguments\"}";
+            result->exit_code = 1;
+            goal_handle->abort(result);
+            return;
+        }
+
+        auto& args = input["arguments"];
+        if (!args.contains("url") || !args["url"].is_string() ||
+            args["url"].get<std::string>().empty()) {
+            RCLCPP_ERROR(get_logger(), "handle_accepted: Missing or empty url");
+            result->output_json = "{\"error\":\"invalid input: url is required\"}";
+            result->exit_code = 1;
+            goal_handle->abort(result);
+            return;
+        }
+
+        std::string url = args["url"];
+        int timeout_s = static_cast<int>(default_timeout_);
+        if (args.contains("timeout_sec") && args["timeout_sec"].is_number())
+            timeout_s = args["timeout_sec"].get<int>();
+
+        RCLCPP_INFO(get_logger(), "Fetching: %s (timeout=%ds)", url.substr(0, 80).c_str(), timeout_s);
+
+        canceled_.store(false);
+        size_t max_size = max_size_bytes_;
+        work_thread_ = std::thread([goal_handle, url, timeout_s, max_size, this]() {
+            auto t0 = std::chrono::steady_clock::now();
+            json res = do_fetch(url, timeout_s, max_size);
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+
+            if (canceled_.load()) {
+                RCLCPP_INFO(get_logger(), "execute: Canceled before result");
+                auto aborted = std::make_shared<ExecuteTool::Result>();
+                goal_handle->abort(aborted);
+                return;
+            }
+
+            auto result = std::make_shared<ExecuteTool::Result>();
+            result->output_json = res.dump();
+            result->exit_code = res.contains("error") ? 1 : 0;
+
+            RCLCPP_INFO(get_logger(), "done in %ldms size=%d", ms,
+                        res.value("size", 0));
+
+            goal_handle->succeed(result);
+        });
+        work_thread_.detach();
+    }
 };
 
+// ============================================================
+// main
+// ============================================================
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<WebFetchNode>());
+    auto temp = std::make_shared<rclcpp::Node>("temp");
+    temp->declare_parameter<std::string>("agent_name", "agent");
+    std::string agent_name = temp->get_parameter("agent_name").as_string();
+    temp.reset();
+    auto node = std::make_shared<WebFetchNode>(agent_name);
+    rclcpp::spin(node);
     rclcpp::shutdown();
     return 0;
 }
