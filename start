@@ -191,6 +191,7 @@ ros2 launch cs_output cs_output.launch.py \
     topic_output:="$TOPIC_OUTPUT" \
     max_results:="$MAX_RESULTS" \
     max_size_mb:="$MAX_SIZE_MB" \
+    repo_dir:="$SOUL_DIR" \
     &> /tmp/cloudsoul_cs_output.log &
 OUTPUT_PID=$!
 echo "   PID: $OUTPUT_PID"
