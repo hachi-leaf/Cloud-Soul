@@ -114,7 +114,7 @@ body {
 }
 .msg-row.user { flex-direction:row-reverse; }
 .msg-body { flex:1; min-width:0; display:flex; flex-direction:column; }
-.msg-row.user .msg-body { align-items:flex-end; }
+.msg-row.user .msg-body {  }
 
 .ava {
   width: 36px; height: 36px;
@@ -288,7 +288,7 @@ body {
 
 .up-bar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; min-height:0; }
 .up-chip {
-  display:flex; align-items:center; gap:8px;
+  display:flex; align-items:flex-end; gap:8px;
   background: var(--surface-variant);
   border-radius: var(--radius-full);
   padding: 8px 16px; font-size: 12px;
@@ -298,7 +298,7 @@ body {
 .up-chip .rm:hover { color: var(--google-red); }
 
 .inp-bar {
-  display:flex; align-items:center; gap:8px;
+  display:flex; align-items:flex-end; gap:8px;
   background: var(--surface-variant);
   border: 1px solid transparent;
   border-radius: var(--radius-lg);
