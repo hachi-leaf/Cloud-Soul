@@ -51,42 +51,67 @@ static std::string sanitize_utf8(const std::string& in) {
 
 // HTML 实体解码（与 web_search 共用逻辑）
 static std::string decode_html_entities(const std::string& in) {
-    std::string s = in;
+    // 命名的实体（无递归，O(n)）
     static const std::vector<std::pair<std::string, std::string>> ents = {
         {"&ensp;", " "}, {"&emsp;", " "}, {"&nbsp;", " "},
         {"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"},
-        {"&quot;", "\""}, {"&apos;", "'"}, {"&middot;", "·"},
-        {"&bull;", "·"}, {"&ndash;", "–"}, {"&mdash;", "—"},
+        {"&quot;", "\""}, {"&apos;", "'"}, {"&middot;", "\xc2\xb7"},
+        {"&bull;", "\xe2\x80\xa2"}, {"&ndash;", "\xe2\x80\x93"}, {"&mdash;", "\xe2\x80\x94"},
     };
-    for (const auto& [entity, ch] : ents) {
-        size_t pos = 0;
-        while ((pos = s.find(entity, pos)) != std::string::npos) {
-            s.replace(pos, entity.size(), ch);
-            pos += ch.size();
+    std::string out;
+    out.reserve(in.size());
+    size_t i = 0;
+    while (i < in.size()) {
+        if (in[i] != '&' || i + 2 >= in.size()) { out += in[i]; i++; continue; }
+        // 检查命名实体
+        bool matched = false;
+        for (const auto& [ent, ch] : ents) {
+            if (in.compare(i, ent.size(), ent) == 0) {
+                out += ch;
+                i += ent.size();
+                matched = true;
+                break;
+            }
         }
-    }
-    std::regex num_ent(R"(&#(\d+);)");
-    std::smatch m;
-    while (std::regex_search(s, m, num_ent)) {
-        int code = std::stoi(m[1].str());
-        std::string ch;
-        if (code < 128) ch = (char)code;
-        else if (code < 0x800) {
-            ch = (char)(0xC0 | (code >> 6));
-            ch += (char)(0x80 | (code & 0x3F));
-        } else if (code < 0x10000) {
-            ch = (char)(0xE0 | (code >> 12));
-            ch += (char)(0x80 | ((code >> 6) & 0x3F));
-            ch += (char)(0x80 | (code & 0x3F));
+        if (matched) continue;
+        // 检查数字实体 &#NNN;
+        if (in[i+1] == '#' && i + 3 < in.size()) {
+            size_t j = i + 2;
+            while (j < in.size() && in[j] >= '0' && in[j] <= '9') j++;
+            if (j < in.size() && in[j] == ';' && j > i + 2) {
+                int code = 0;
+                for (size_t k = i + 2; k < j; k++) code = code * 10 + (in[k] - '0');
+                if (code < 128) out += (char)code;
+                else if (code < 0x800) {
+                    out += (char)(0xC0 | (code >> 6));
+                    out += (char)(0x80 | (code & 0x3F));
+                } else if (code < 0x10000) {
+                    out += (char)(0xE0 | (code >> 12));
+                    out += (char)(0x80 | ((code >> 6) & 0x3F));
+                    out += (char)(0x80 | (code & 0x3F));
+                }
+                i = j + 1;
+                continue;
+            }
         }
-        s.replace(m.position(), m.length(), ch);
+        out += in[i];
+        i++;
     }
-    return s;
+    return out;
 }
 
-// 去除 HTML 标签
+// 去除 HTML 标签 — 手动跳过 <...> ，避免 regex 栈溢出
 static std::string strip_tags(const std::string& in) {
-    return std::regex_replace(in, std::regex("<[^>]+>"), "");
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); i++) {
+        if (in[i] == '<') {
+            while (i < in.size() && in[i] != '>') i++;
+            continue; // 跳过整个标签
+        }
+        out += in[i];
+    }
+    return out;
 }
 
 // 去除脚本、样式块和 HTML 注释 — 手动状态机，避免 std::regex 栈溢出
@@ -301,10 +326,36 @@ private:
         clean = strip_tags(clean);
         clean = decode_html_entities(clean);
 
-        // 压缩空白行：多个连续换行 → 最多两个
-        clean = std::regex_replace(clean, std::regex("\n{3,}"), "\n\n");
-        // 压缩行内空白
-        clean = std::regex_replace(clean, std::regex("[ \\t]{2,}"), " ");
+        // 压缩空白行：手动折叠多个连续换行 → 最多两个
+        {
+            std::string tmp; tmp.reserve(clean.size());
+            int nl_count = 0;
+            for (char c : clean) {
+                if (c == '\n') { nl_count++; }
+                else {
+                    if (nl_count > 2) { tmp.append("\n\n"); }
+                    else if (nl_count > 0) { tmp.append(nl_count, '\n'); }
+                    nl_count = 0;
+                    tmp += c;
+                }
+            }
+            if (nl_count > 2) tmp.append("\n\n");
+            else if (nl_count > 0) tmp.append(nl_count, '\n');
+            clean = std::move(tmp);
+        }
+        // 压缩行内空白（空格/制表符）：连续 → 单个
+        {
+            std::string tmp; tmp.reserve(clean.size());
+            int sp_count = 0;
+            for (char c : clean) {
+                if (c == ' ' || c == '\t') { sp_count++; }
+                else {
+                    if (sp_count > 0) { tmp += ' '; sp_count = 0; }
+                    tmp += c;
+                }
+            }
+            clean = std::move(tmp);
+        }
         // trim 首尾
         clean.erase(0, clean.find_first_not_of(" \t\r\n"));
         clean.erase(clean.find_last_not_of(" \t\r\n") + 1);
