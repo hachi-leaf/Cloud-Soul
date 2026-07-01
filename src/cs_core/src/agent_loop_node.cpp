@@ -162,12 +162,6 @@ public:
                 create_new_json_file();
                 save_current_json();
 
-                // 放入压缩完毕标识消息
-                new_msgs.push_back({
-                    {"role", "user"},
-                    {"content", "记忆压缩完成，消息列表已更新"}
-                });
-
                 // 压缩后立即调用一次 LLM，更新 token 计数
                 json tools = fetch_current_tools();
                 int input_tokens = -1;
@@ -442,7 +436,7 @@ private:
     bool response_assistant_no_tools() {
         msg_history_.push_back({
             {"role", "user"},
-            {"content", "本 Agent 架构禁止直接 Reply，请选择合适的消息渠道工具通知用户或 sleep 10 静默"}
+            {"content", "在本架构中用户无法查看本条回复，选择合适的消息渠道回复，或使用 sleep 5 静默。"}
         });
         save_current_json();
         append_input_snapshot();
