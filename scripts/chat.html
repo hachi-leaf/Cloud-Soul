@@ -469,6 +469,7 @@ banner.appendChild(langSpan);banner.appendChild(copyBtn);wrap.appendChild(banner
 function highlightCode(el){el.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b)}catch(e){}});wrapCodeBlocks(el);}
 
 
+function fileIcon(name){const ext=(name||'').split('.').pop().toLowerCase();const map={pdf:'📄',doc:'📝',docx:'📝',txt:'📃',md:'📃',py:'💻',js:'💻',ts:'💻',cpp:'💻',c:'💻',h:'💻',hpp:'💻',rs:'💻',go:'💻',java:'💻',zip:'📦',tar:'📦',gz:'📦',rar:'📦','7z':'📦',png:'🖼️',jpg:'🖼️',jpeg:'🖼️',gif:'🖼️',svg:'🖼️',webp:'🖼️',mp3:'🎵',wav:'🎵',ogg:'🎵',flac:'🎵',mp4:'🎬',mov:'🎬',avi:'🎬',mkv:'🎬',xls:'📊',xlsx:'📊',csv:'📊',ppt:'📑',pptx:'📑',html:'🌐',css:'🌐',json:'⚙️',yaml:'⚙️',yml:'⚙️',xml:'⚙️',toml:'⚙️',ini:'⚙️',cfg:'⚙️',conf:'⚙️',sh:'💻',bash:'💻',zsh:'💻',fish:'💻',ps1:'💻',bat:'💻',cmake:'⚙️',makefile:'⚙️',dockerfile:'🐳',sql:'🗄️',db:'🗄️',sqlite:'🗄️',log:'📋',lock:'🔒','3mf':'🖨️',stl:'🖨️',obj:'🖨️',step:'🖨️',stp:'🖨️',igs:'🖨️',iges:'🖨️'};return map[ext]||'📎';}
 function szf(sz){if(sz>=1048576)return(sz/1048576).toFixed(1)+' MB';if(sz>=1024)return(sz/1024).toFixed(1)+' KB';return sz+' B';}
 
 function am(text,role,files,ts_server){
