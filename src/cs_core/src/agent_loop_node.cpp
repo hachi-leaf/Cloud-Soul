@@ -164,6 +164,7 @@ public:
 
                 // 压缩后不立即调用 LLM，token 计为 0，让主循环自然处理
                 current_input_tokens_ = 0;
+                needs_post_compress_macro_ = true;  // 下次快照注入宏文本
                 RCLCPP_INFO(get_logger(), "压缩完成，新消息数: %zu", msg_history_.size());
                 continue;
             } else {
@@ -589,6 +590,11 @@ private:
         } else {
             RCLCPP_WARN(get_logger(), "获取快照超时");
         }
+        // 压缩后首次快照：在 user 消息前注入宏文本，提示 LLM 忽略截断的工具链
+        if (needs_post_compress_macro_) {
+            needs_post_compress_macro_ = false;
+            snapshot_str = "上下文已压缩。上方概要包含了压缩前内容的摘要，请自然地继续对话。\n" + snapshot_str;
+        }
         msg_history_.push_back({{"role", "user"}, {"content", snapshot_str}});
         save_current_json();
         return true;
@@ -618,6 +624,7 @@ private:
     json msg_history_;
     std::string current_json_path_;
     int current_input_tokens_ = 0;
+    bool needs_post_compress_macro_ = false;
 
     std::unique_ptr<openai_client::OpenAIClient> openai_client_;
 
