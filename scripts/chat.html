@@ -465,13 +465,13 @@ banner.appendChild(langSpan);banner.appendChild(copyBtn);wrap.appendChild(banner
 function highlightCode(el){el.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b)}catch(e){}});wrapCodeBlocks(el);}
 function szf(sz){if(sz>=1048576)return(sz/1048576).toFixed(1)+' MB';if(sz>=1024)return(sz/1024).toFixed(1)+' KB';return sz+' B';}
 
-function am(text,role,files){
+function am(text,role,files,ts_server){
   const ei=mi.querySelector('.empty-hint');if(ei)ei.remove();
   const row=document.createElement('div');row.className='msg-row '+role;
   if(files&&files.length)text=text.replace(/\n\[附件:.*\]$/,'');
   let html=marked.parse(text||''),filesHtml='';
   if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class=\"fchip\"><div class=\"fc\"><span class=\"fn\">'+nm+'</span><span class=\"fs\">'+sz+'</span></div></div>';});}
-  const ts=new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+  const ts=ts_server||new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
   row.innerHTML=avaHTML(role)+'<div class=\"msg-body\"><div class=\"bub\">'+html+'</div>'+(filesHtml?'<div class=\"attaches\">'+filesHtml+'</div>':'')+'<div class=\"time\">'+ts+'</div></div>';
   mi.appendChild(row);highlightCode(row);ms.scrollTop=ms.scrollHeight;
 }
@@ -479,14 +479,14 @@ function am(text,role,files){
 async function poll(){
   while(true){
     try{const r=await fetch(H_URL+'/poll?after='+_lastSeq);const d=await r.json();
-    if(d.messages)d.messages.forEach(m=>{if(m.role==='user'&&_hasSent){_hasSent=false;return;}am(m.msg,m.role,m.files);});
+    if(d.messages)d.messages.forEach(m=>{if(m.role==='user'&&_hasSent){_hasSent=false;return;}am(m.msg,m.role,m.files,m.ts);});
     if(d.last_seq!==undefined)_lastSeq=d.last_seq;}catch(e){}
     await new Promise(r=>setTimeout(r,2000));
   }
 }
 
 async function init(){
-  try{const r=await fetch(H_URL+'/history');const d=await r.json();if(d.messages)d.messages.forEach(m=>am(m.msg,m.role,m.files));if(d.last_seq!==undefined)_lastSeq=d.last_seq;}catch(e){}
+  try{const r=await fetch(H_URL+'/history');const d=await r.json();if(d.messages)d.messages.forEach(m=>am(m.msg,m.role,m.files,m.ts));if(d.last_seq!==undefined)_lastSeq=d.last_seq;}catch(e){}
   stt.textContent='就绪';poll();
 }
 init();
