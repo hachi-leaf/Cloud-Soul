@@ -410,7 +410,7 @@ body {
 .fi { font-size: 20px; flex-shrink: 0; line-height: 1; }
 .up-chip .fi { font-size: 16px; }
 
-.fi{font-size:12px;flex-shrink:0;line-height:1;font-weight:600;color:var(--google-blue);background:rgba(26,115,232,.1);padding:2px 5px;border-radius:4px;letter-spacing:.5px}.up-chip .fi{font-size:11px;padding:1px 4px}
+.fib{font-size:11px;flex-shrink:0;line-height:1;font-weight:600;padding:3px 6px;border-radius:4px;letter-spacing:.3px;font-family:Google Sans,Roboto,sans-serif}.up-chip .fib{font-size:10px;padding:2px 4px}
 </style>
 </head>
 <body>
@@ -470,7 +470,7 @@ banner.appendChild(langSpan);banner.appendChild(copyBtn);wrap.appendChild(banner
 function highlightCode(el){el.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b)}catch(e){}});wrapCodeBlocks(el);}
 
 
-function fileIcon(name){const ext=(name||'').split('.').pop().toLowerCase();const map={pdf:'PDF',doc:'DOC',docx:'DOC',txt:'TXT',md:'MD',py:'PY',js:'JS',ts:'TS',cpp:'C++',c:'C',h:'H',hpp:'H',rs:'RS',go:'GO',java:'JV',zip:'ZIP',tar:'TAR',gz:'GZ',rar:'RAR','7z':'7Z',png:'IMG',jpg:'IMG',jpeg:'IMG',gif:'GIF',svg:'SVG',webp:'IMG',mp3:'MP3',wav:'WAV',ogg:'OGG',flac:'FLAC',mp4:'MP4',mov:'MOV',avi:'AVI',mkv:'MKV',xls:'XLS',xlsx:'XLS',csv:'CSV',ppt:'PPT',pptx:'PPT',html:'HTML',css:'CSS',json:'{}',yaml:'YML',yml:'YML',xml:'XML',toml:'CFG',ini:'CFG',cfg:'CFG',conf:'CFG',sh:'SH',bash:'SH',zsh:'SH',fish:'SH',ps1:'PS',bat:'BAT',cmake:'CMK',makefile:'MK',dockerfile:'DK',sql:'SQL',db:'DB',sqlite:'DB',log:'LOG',lock:'LCK','3mf':'3D',stl:'3D',obj:'3D',step:'3D',stp:'3D',igs:'3D',iges:'3D'};return map[ext]||'FILE';}
+function fileIcon(name){const ext=(name||'').split('.').pop().toLowerCase();const colors={pdf:{bg:'#ea4335',c:'#fff'},doc:{bg:'#1a73e8',c:'#fff'},docx:{bg:'#1a73e8',c:'#fff'},txt:{bg:'#5f6368',c:'#fff'},md:{bg:'#5f6368',c:'#fff'},py:{bg:'#34a853',c:'#fff'},js:{bg:'#f9ab00',c:'#202124'},ts:{bg:'#1a73e8',c:'#fff'},cpp:{bg:'#1a73e8',c:'#fff'},c:{bg:'#5f6368',c:'#fff'},h:{bg:'#5f6368',c:'#fff'},hpp:{bg:'#5f6368',c:'#fff'},rs:{bg:'#ea4335',c:'#fff'},go:{bg:'#00add8',c:'#fff'},java:{bg:'#ea4335',c:'#fff'},zip:{bg:'#f9ab00',c:'#fff'},tar:{bg:'#f9ab00',c:'#fff'},gz:{bg:'#f9ab00',c:'#fff'},rar:{bg:'#f9ab00',c:'#fff'},'7z':{bg:'#f9ab00',c:'#fff'},png:{bg:'#8e24aa',c:'#fff'},jpg:{bg:'#8e24aa',c:'#fff'},jpeg:{bg:'#8e24aa',c:'#fff'},gif:{bg:'#8e24aa',c:'#fff'},svg:{bg:'#8e24aa',c:'#fff'},webp:{bg:'#8e24aa',c:'#fff'},mp3:{bg:'#1a73e8',c:'#fff'},wav:{bg:'#1a73e8',c:'#fff'},ogg:{bg:'#1a73e8',c:'#fff'},flac:{bg:'#1a73e8',c:'#fff'},mp4:{bg:'#ea4335',c:'#fff'},mov:{bg:'#ea4335',c:'#fff'},avi:{bg:'#ea4335',c:'#fff'},mkv:{bg:'#ea4335',c:'#fff'},xls:{bg:'#34a853',c:'#fff'},xlsx:{bg:'#34a853',c:'#fff'},csv:{bg:'#34a853',c:'#fff'},ppt:{bg:'#ea4335',c:'#fff'},pptx:{bg:'#ea4335',c:'#fff'},html:{bg:'#ea4335',c:'#fff'},css:{bg:'#1a73e8',c:'#fff'},json:{bg:'#5f6368',c:'#fff'},yaml:{bg:'#5f6368',c:'#fff'},yml:{bg:'#5f6368',c:'#fff'},xml:{bg:'#5f6368',c:'#fff'},toml:{bg:'#5f6368',c:'#fff'},ini:{bg:'#5f6368',c:'#fff'},cfg:{bg:'#5f6368',c:'#fff'},conf:{bg:'#5f6368',c:'#fff'},sh:{bg:'#202124',c:'#fff'},bash:{bg:'#202124',c:'#fff'},zsh:{bg:'#202124',c:'#fff'},fish:{bg:'#202124',c:'#fff'},ps1:{bg:'#202124',c:'#fff'},bat:{bg:'#202124',c:'#fff'},cmake:{bg:'#34a853',c:'#fff'},makefile:{bg:'#34a853',c:'#fff'},dockerfile:{bg:'#1a73e8',c:'#fff'},sql:{bg:'#1a73e8',c:'#fff'},db:{bg:'#f9ab00',c:'#fff'},sqlite:{bg:'#1a73e8',c:'#fff'},log:{bg:'#5f6368',c:'#fff'},lock:{bg:'#5f6368',c:'#fff'},'3mf':{bg:'#8e24aa',c:'#fff'},stl:{bg:'#8e24aa',c:'#fff'},obj:{bg:'#8e24aa',c:'#fff'},step:{bg:'#8e24aa',c:'#fff'},stp:{bg:'#8e24aa',c:'#fff'},igs:{bg:'#8e24aa',c:'#fff'},iges:{bg:'#8e24aa',c:'#fff'}};const d=colors[ext]||{bg:'#5f6368',c:'#fff'};const lb=(ext||'file').toUpperCase().slice(0,4);return'<span class="fib" style="background:'+d.bg+';color:'+d.c+'">'+lb+'</span>';}
 function szf(sz){if(sz>=1048576)return(sz/1048576).toFixed(1)+' MB';if(sz>=1024)return(sz/1024).toFixed(1)+' KB';return sz+' B';}
 
 function am(text,role,files,ts_server){
@@ -478,7 +478,7 @@ function am(text,role,files,ts_server){
   const row=document.createElement('div');row.className='msg-row '+role;
   if(files&&files.length)text=text.replace(/\n\[附件:.*\]$/,'');
   let html=role==='user'?text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'):marked.parse(text||''),filesHtml='';
-  if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class=\"fchip\"><span class=\"fi\">'+fileIcon(nm)+'</span><div class=\"fc\"><span class=\"fn\">'+nm+'</span><span class=\"fs\">'+sz+'</span></div></div>';});}
+  if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class=\"fchip\">'+fileIcon(nm)+'<div class=\"fc\"><span class=\"fn\">'+nm+'</span><span class=\"fs\">'+sz+'</span></div></div>';});}
   const ts=ts_server||new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
   row.innerHTML=avaHTML(role)+'<div class=\"msg-body\"><div class=\"bub\">'+html+'</div>'+(filesHtml?'<div class=\"attaches\">'+filesHtml+'</div>':'')+'<div class=\"time\">'+ts+'</div></div>';
   mi.appendChild(row);highlightCode(row);ms.scrollTop=ms.scrollHeight;
@@ -514,7 +514,7 @@ async function sm(){
 }
 
 function renderUpbar(){
-  let h='';selFiles.forEach((f,i)=>{const sz=szf(f.file.size);const cls=f.status==='err'?' style=\"color:#ea4335\"':'';h+='<div class=\"up-chip\"><span class=\"fi\">'+fileIcon(f.file.name)+'</span><span class=\"c-name\" title=\"'+f.file.name.replace(/\"/g,'&quot;')+'\">'+f.file.name.replace(/</g,'&lt;')+'</span><span>'+sz+'</span><span class=\"rm\" onclick=\"selFiles.splice('+i+',1);renderUpbar();ar()\">&times;</span></div>';});
+  let h='';selFiles.forEach((f,i)=>{const sz=szf(f.file.size);const cls=f.status==='err'?' style=\"color:#ea4335\"':'';h+='<div class=\"up-chip\">'+fileIcon(f.file.name)+'<span class=\"c-name\" title=\"'+f.file.name.replace(/\"/g,'&quot;')+'\">'+f.file.name.replace(/</g,'&lt;')+'</span><span>'+sz+'</span><span class=\"rm\" onclick=\"selFiles.splice('+i+',1);renderUpbar();ar()\">&times;</span></div>';});
   ub.innerHTML=h;
 }
 async function uploadAll(){
