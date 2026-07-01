@@ -76,9 +76,99 @@ static size_t curl_write_cb(void* ptr, size_t sz, size_t nmemb, void* userdata) 
     return sz * nmemb;
 }
 
-// 简单 JSON 错误响应构造（避免 raw string 的转义地狱）
 static std::string err_json(const std::string& msg) {
     return "{\"error\":\"" + msg + "\"}";
+}
+
+static int check_latency_ms(const std::string& host, const std::string& proxy) {
+    CURL* c = curl_easy_init();
+    if (!c) return -1;
+    std::string url = "https://" + host + "/";
+    curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(c, CURLOPT_NOBODY, 1L);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 3L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+    if (!proxy.empty()) curl_easy_setopt(c, CURLOPT_PROXY, proxy.c_str());
+    CURLcode res = curl_easy_perform(c);
+    long http_code = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
+    double total = 0;
+    curl_easy_getinfo(c, CURLINFO_TOTAL_TIME, &total);
+    curl_easy_cleanup(c);
+    return (res == CURLE_OK && http_code > 0 && http_code < 500)
+        ? static_cast<int>(total * 1000) : -1;
+}
+
+static int select_engine_static(const std::string& source, const std::string& proxy) {
+    if (source == "auto") {
+        int best_idx = 0, best_lat = 999999;
+        for (size_t i = 0; i < ENGINES.size(); ++i) {
+            int lat = check_latency_ms(ENGINES[i].host, proxy);
+            if (lat >= 0 && lat < best_lat) { best_lat = lat; best_idx = i; }
+        }
+        return best_idx;
+    }
+    for (size_t i = 0; i < ENGINES.size(); ++i)
+        if (ENGINES[i].name == source) return i;
+    return 0;
+}
+
+static json do_search(const EngineConfig& eng, const std::string& query,
+                      int max_r, int timeout_s, const std::string& proxy) {
+    json result;
+    result["results"] = json::array();
+    result["count"] = 0;
+
+    CURL* c = curl_easy_init();
+    if (!c) { result["error"] = "curl init failed"; return result; }
+
+    std::string url = eng.url_prefix;
+    char* esc = curl_easy_escape(c, query.c_str(), query.size());
+    url += esc; curl_free(esc);
+
+    std::string body;
+    curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &body);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, static_cast<long>(timeout_s));
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(c, CURLOPT_USERAGENT,
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+    if (!proxy.empty()) curl_easy_setopt(c, CURLOPT_PROXY, proxy.c_str());
+
+    CURLcode rc = curl_easy_perform(c);
+    long http_code = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
+    curl_easy_cleanup(c);
+
+    if (rc != CURLE_OK) {
+        result["error"] = std::string("curl: ") + curl_easy_strerror(rc);
+        return result;
+    }
+    if (http_code != 200) {
+        result["error"] = "HTTP " + std::to_string(http_code);
+        return result;
+    }
+
+    std::regex re(eng.result_pattern, std::regex::icase);
+    auto it = std::sregex_iterator(body.begin(), body.end(), re);
+    auto end = std::sregex_iterator();
+    for (int k = 0; it != end && k < max_r; ++it, ++k) {
+        auto& m = *it;
+        if (m.size() < 4) continue;
+        json item;
+        item["url"]     = m[1].str();
+        item["title"]   = strip_html(m[2].str());
+        item["snippet"] = strip_html(m[3].str());
+        result["results"].push_back(item);
+    }
+    result["count"] = result["results"].size();
+    return result;
 }
 
 class WebSearchNode : public rclcpp::Node {
@@ -127,126 +217,30 @@ private:
     std::atomic<bool> cancelled_{false};
     rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
 
-    static int check_latency_ms(const std::string& host, const std::string& proxy) {
-        CURL* c = curl_easy_init();
-        if (!c) return -1;
-        std::string url = "https://" + host + "/";
-        curl_easy_setopt(c, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(c, CURLOPT_NOBODY, 1L);
-        curl_easy_setopt(c, CURLOPT_TIMEOUT, 5L);
-        curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 3L);
-        curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
-        if (!proxy.empty()) curl_easy_setopt(c, CURLOPT_PROXY, proxy.c_str());
-        CURLcode res = curl_easy_perform(c);
-        long http_code = 0;
-        curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
-        double total = 0;
-        curl_easy_getinfo(c, CURLINFO_TOTAL_TIME, &total);
-        curl_easy_cleanup(c);
-        return (res == CURLE_OK && http_code > 0 && http_code < 500)
-            ? static_cast<int>(total * 1000) : -1;
-    }
-
-    int select_engine(const std::string& source) {
-        if (source == "auto") {
-            int best_idx = 0, best_lat = 999999;
-            for (size_t i = 0; i < ENGINES.size(); ++i) {
-                int lat = check_latency_ms(ENGINES[i].host, proxy_);
-                RCLCPP_INFO(this->get_logger(), "engine=%s latency=%dms",
-                            ENGINES[i].name.c_str(), lat);
-                if (lat >= 0 && lat < best_lat) { best_lat = lat; best_idx = i; }
-            }
-            RCLCPP_INFO(this->get_logger(), "auto selected engine=%s (%dms)",
-                        ENGINES[best_idx].name.c_str(), best_lat);
-            return best_idx;
-        }
-        for (size_t i = 0; i < ENGINES.size(); ++i)
-            if (ENGINES[i].name == source) return i;
-        return 0;
-    }
-
-    json do_search(const EngineConfig& eng, const std::string& query,
-                   int max_r, int timeout_s) {
-        json result;
-        result["results"] = json::array();
-        result["count"] = 0;
-
-        CURL* c = curl_easy_init();
-        if (!c) { result["error"] = "curl init failed"; return result; }
-
-        std::string url = eng.url_prefix;
-        char* esc = curl_easy_escape(c, query.c_str(), query.size());
-        url += esc; curl_free(esc);
-
-        std::string body;
-        curl_easy_setopt(c, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_cb);
-        curl_easy_setopt(c, CURLOPT_WRITEDATA, &body);
-        curl_easy_setopt(c, CURLOPT_TIMEOUT, static_cast<long>(timeout_s));
-        curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
-        curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(c, CURLOPT_USERAGENT,
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-        curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
-        if (!proxy_.empty()) curl_easy_setopt(c, CURLOPT_PROXY, proxy_.c_str());
-
-        CURLcode rc = curl_easy_perform(c);
-        long http_code = 0;
-        curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
-        curl_easy_cleanup(c);
-
-        if (rc != CURLE_OK) {
-            result["error"] = std::string("curl: ") + curl_easy_strerror(rc);
-            return result;
-        }
-        if (http_code != 200) {
-            result["error"] = "HTTP " + std::to_string(http_code);
-            return result;
-        }
-
-        std::regex re(eng.result_pattern, std::regex::icase);
-        auto it = std::sregex_iterator(body.begin(), body.end(), re);
-        auto end = std::sregex_iterator();
-        for (int k = 0; it != end && k < max_r; ++it, ++k) {
-            auto& m = *it;
-            if (m.size() < 4) continue;
-            json item;
-            item["url"]     = m[1].str();
-            item["title"]   = strip_html(m[2].str());
-            item["snippet"] = strip_html(m[3].str());
-            result["results"].push_back(item);
-        }
-        result["count"] = result["results"].size();
-        return result;
-    }
-
     void execute(std::shared_ptr<rclcpp_action::ServerGoalHandle<ExecuteTool>> handle) {
         cancelled_ = false;
         auto goal = handle->get_goal();
-        auto result = std::make_shared<ExecuteTool::Result>();
 
-        // 解析 input_json: {"name":"web_search","arguments":{...}}
         json input;
-        try {
-            input = json::parse(goal->input_json);
-        } catch (...) {
-            result->output_json = err_json("invalid input JSON");
-            handle->succeed(result);
+        try { input = json::parse(goal->input_json); } catch (...) {
+            auto r = std::make_shared<ExecuteTool::Result>();
+            r->output_json = err_json("invalid input JSON");
+            handle->succeed(r);
             return;
         }
 
         if (!input.contains("arguments") || !input["arguments"].is_object()) {
-            result->output_json = err_json("missing arguments");
-            handle->succeed(result);
+            auto r = std::make_shared<ExecuteTool::Result>();
+            r->output_json = err_json("missing arguments");
+            handle->succeed(r);
             return;
         }
 
         auto& args = input["arguments"];
         if (!args.contains("query") || !args["query"].is_string()) {
-            result->output_json = err_json("missing query");
-            handle->succeed(result);
+            auto r = std::make_shared<ExecuteTool::Result>();
+            r->output_json = err_json("missing query");
+            handle->succeed(r);
             return;
         }
 
@@ -258,14 +252,17 @@ private:
         RCLCPP_INFO(this->get_logger(), "search query='%s' engine=%s max=%d timeout=%d",
                     query.c_str(), source.c_str(), max_r, timeout_s);
 
-        int ei = select_engine(source);
-        const auto& eng = ENGINES[ei];
-
+        // 所有阻塞工作（引擎选择 + 搜索）都在 worker 线程中执行，不阻塞 ROS2 executor
         auto safe_handle = handle;
-        auto safe_result = result;
+        std::string proxy = proxy_;
         std::thread([=, this]() {
             auto t0 = std::chrono::steady_clock::now();
-            json res = do_search(eng, query, max_r, timeout_s);
+
+            int ei = select_engine_static(source, proxy);
+            const auto& eng = ENGINES[ei];
+            RCLCPP_INFO(this->get_logger(), "selected engine=%s", eng.name.c_str());
+
+            json res = do_search(eng, query, max_r, timeout_s, proxy);
             auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - t0).count();
 
@@ -276,11 +273,12 @@ private:
                 return;
             }
 
-            safe_result->output_json = res.dump();
-            safe_result->exit_code = res.contains("error") ? 1 : 0;
+            auto sr = std::make_shared<ExecuteTool::Result>();
+            sr->output_json = res.dump();
+            sr->exit_code = res.contains("error") ? 1 : 0;
             RCLCPP_INFO(this->get_logger(), "done in %ldms results=%d engine=%s",
                         ms, res.value("count", 0), eng.name.c_str());
-            safe_handle->succeed(safe_result);
+            safe_handle->succeed(sr);
         }).detach();
     }
 };
