@@ -19,7 +19,7 @@ pull_retry_max (3)      ✓
 push_retry_max (5)      ✓
 context_dir                         ✓
 max_context_tokens                  ✓
-summary_turns                       ✓
+keep_context_ratio                  ✓
 openai_base_url          ✓            ✓
 openai_api_key           ✓            ✓
 openai_model             ✓            ✓
@@ -43,7 +43,7 @@ def generate_launch_description():
     push_retry_max     = LaunchConfiguration('push_retry_max',      default='5')
     context_dir        = LaunchConfiguration('context_dir',         default='~/.cloudsoul/contexts')
     max_context_tokens = LaunchConfiguration('max_context_tokens',  default='200000')
-    summary_turns      = LaunchConfiguration('summary_turns',       default='30')
+    keep_context_ratio = LaunchConfiguration('keep_context_ratio',  default='0.5')
     openai_base_url    = LaunchConfiguration('openai_base_url',     default='https://api.deepseek.com')
     openai_api_key     = LaunchConfiguration('openai_api_key',      default='')
     openai_model       = LaunchConfiguration('openai_model',        default='deepseek-v4-pro')
@@ -59,7 +59,7 @@ def generate_launch_description():
         DeclareLaunchArgument('push_retry_max',      default_value='5'),
         DeclareLaunchArgument('context_dir',         default_value='~/.cloudsoul/contexts'),
         DeclareLaunchArgument('max_context_tokens',  default_value='200000'),
-        DeclareLaunchArgument('summary_turns',       default_value='30'),
+        DeclareLaunchArgument('keep_context_ratio',  default_value='0.5'),
         DeclareLaunchArgument('openai_base_url',     default_value='https://api.deepseek.com'),
         DeclareLaunchArgument('openai_api_key',      default_value=''),
         DeclareLaunchArgument('openai_model',        default_value='deepseek-v4-pro'),
@@ -98,7 +98,7 @@ def generate_launch_description():
                 'agent_name': agent_name,
                 'context_dir': context_dir,
                 'max_context_tokens': max_context_tokens,
-                'summary_turns': summary_turns,
+                'keep_context_ratio': keep_context_ratio,
                 'openai_base_url': openai_base_url,
                 'openai_api_key': openai_api_key,
                 'openai_model': openai_model,
