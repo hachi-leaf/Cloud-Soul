@@ -8,7 +8,7 @@
 // Param:
 //  <string>agent_name       --> Agent 名
 //  <float64>info_rate       --> 发布 Tools Info 的频率（Hz）
-//  <string>topic_output     --> ros_msg 渠道发布的话题名，默认 "raw_message"
+//  <string>topic_output     --> ros_msg 渠道发布的话题名，默认 "ros2_msg"
 //  <float64>default_timeout --> 默认状态下（Agent 将 Action 的 Goal 的 timeout_sec 设为 0 时）Action 的 timeout
 
 // Topic: /<agent_name>/output/message_send/info
@@ -66,7 +66,7 @@
 // Param:
 //  <string>agent_name       --> Agent 名
 //  <float64>info_rate       --> 发布 Tools Info 的频率（Hz）
-//  <string>topic_output     --> ros_msg 渠道发布的话题名，默认 "raw_message"
+//  <string>topic_output     --> ros_msg 渠道发布的话题名，默认 "ros2_msg"
 //  <float64>default_timeout --> 默认状态下（Agent 将 Action 的 Goal 的 timeout_sec 设为 0 时）Action 的 timeout
 
 // Topic: /<agent_name>/output/message_send/info
@@ -221,7 +221,7 @@ public:
   {
     this->declare_parameter<std::string>("agent_name", agent_name);
     this->declare_parameter<double>("info_rate", 1.0);
-    this->declare_parameter<std::string>("topic_output", "raw_message");
+    this->declare_parameter<std::string>("topic_output", "ros2_msg");
     this->declare_parameter<double>("default_timeout", 30.0);
 
     double info_rate = this->get_parameter("info_rate").as_double();

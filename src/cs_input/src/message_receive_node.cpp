@@ -187,7 +187,7 @@ private:
         std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%dT%H:%M:%SZ", gmt);
 
         std::ostringstream oss;
-        oss << "[" << time_buf << "+" << channel << "] " << body;
+        oss << "[" << time_buf << " from " << channel << "] " << body;
         return oss.str();
     }
 
