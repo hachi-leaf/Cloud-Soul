@@ -221,6 +221,21 @@ private:
         }
         for (const auto& name : to_remove) {
             tools_.erase(name);
+        // TODO: 热插拔健壮性 — 工具节点崩溃后, output_mgmt 的 action client 和 subscription
+        // 可能变成僵尸状态, 导致其他正常工具也出现 "Tool not found" 错误。
+        //
+        // 问题背景: 2026-07-02 手动 kill web_fetch_node 后重启, output_mgmt 的 tools_ map
+        // 仍持有旧节点的 stale action client, 心跳扫描因僵尸连接超时而短暂瘫痪整个工具发现机制。
+        //
+        // 现象: 所有工具节点 (shell_exec/web_fetch/message_send 等) 连续返回 "Tool not found"
+        // 或 "cannot stop tool", 即使节点实际在线。需要完整重启 Adam 才能恢复。
+        //
+        // 预计方案:
+        //   1. 在 handle_tool_heartbeat() 中检测 action_client 是否 server 已不可达,
+        //      若不可达则主动清理 (tools_.erase + reset action_client)
+        //   2. 或在调用 action client 时加超时 + 失败自动重试, 避免僵尸连接阻塞
+        //   3. 工具发现时用 wait_for_action_server() 验证可达性, 而非只依赖 topic 存在
+
             RCLCPP_WARN(get_logger(), "Tool removed due to heartbeat timeout: %s", name.c_str());
         }
     }
