@@ -38,7 +38,7 @@ def generate_launch_description():
     cancel_timeout_arg = DeclareLaunchArgument('cancel_timeout', default_value='2.0')
     delay_timeout_arg = DeclareLaunchArgument('delay_timeout', default_value='5.0')
     info_rate_arg = DeclareLaunchArgument('info_rate', default_value='1.0')
-    topic_output_arg = DeclareLaunchArgument('topic_output', default_value='raw_message')
+    topic_output_arg = DeclareLaunchArgument('topic_output', default_value='ros2_msg')
     repo_dir_arg = DeclareLaunchArgument('repo_dir', default_value='')
     max_results_arg = DeclareLaunchArgument('max_results', default_value='10')
     max_size_mb_arg = DeclareLaunchArgument('max_size_mb', default_value='5')
