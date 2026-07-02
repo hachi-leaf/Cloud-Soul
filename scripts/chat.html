@@ -447,6 +447,14 @@ body {
 }
 .sidebar-toggle:hover { background:var(--border); }
 .main-area { flex:1; display:flex; flex-direction:column; min-width:0; overflow:hidden; }
+.appbar-brand {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+
 .appbar-left { display:flex; align-items:center; gap:4px; min-width:140px; }
 .hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-section,.hljs-link{color:#d73a49}
 .hljs-string,.hljs-addition,.hljs-attr{color:#032f62}
@@ -485,7 +493,7 @@ body {
     <button class="sidebar-toggle" onclick="toggleSidebar()" title="节点列表">☰</button>
     <span class="appbar-brand">Cloud Soul</span>
   </div>
-  <div class="appbar-title">Adam</div>
+  <div class="appbar-title">{agent_name}</div>
   <div class="appbar-actions">
     <button class="icon-btn" onclick="td()" title="主题" id="darkBtn">🌙</button>
   </div>
@@ -494,7 +502,7 @@ body {
 <div class="msgs" id="ms"><div class="msgs-inner" id="mi">
   <div class="empty-hint">
     <div class="logo">⚡</div>
-    <div class="title">你好，我是 Adam</div>
+    <div class="title">你好，我是 {agent_name}</div>
     <div class="subtitle">Cloud-Soul AI Agent · ROS2 · 云端记忆</div>
   </div>
 </div></div>
