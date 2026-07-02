@@ -166,6 +166,8 @@ public:
                     new_msgs.push_back(msg);
                 }
                 msg_history_ = new_msgs;
+                msg_token_history_.clear();
+                sync_token_history();
                 create_new_json_file();
                 save_current_json();
 
@@ -189,6 +191,7 @@ private:
             RCLCPP_INFO(get_logger(), "加载已有对话: %s", latest_file.c_str());
             load_json_file(latest_file);
             current_json_path_ = latest_file;
+            sync_token_history();
         } else {
             RCLCPP_INFO(get_logger(), "无已有对话，创建新对话");
             std::string sys_prompt;
@@ -200,6 +203,7 @@ private:
             msg_history_.push_back({{"role", "system"}, {"content", sys_prompt}});
             msg_history_.push_back({{"role", "user"}, {"content", "新对话开始"}});
             msg_history_.push_back({{"role", "assistant"}, {"content", "新对话已启动，等待指令。"}});
+            msg_token_history_ = {-1, -1, -1};
             create_new_json_file();
             save_current_json();
         }
@@ -237,6 +241,7 @@ private:
     }
 
     void save_current_json() {
+        sync_token_history();
         std::ofstream ofs(current_json_path_);
         if (!ofs) {
             RCLCPP_ERROR(get_logger(), "无法写入文件: %s", current_json_path_.c_str());
@@ -246,6 +251,16 @@ private:
             ofs << msg.dump() << "\n";
         }
         ofs.close();
+
+        // 同步保存 token 历史
+        std::string tokens_path = current_json_path_ + ".tokens";
+        std::ofstream tfs(tokens_path);
+        if (tfs) {
+            for (int t : msg_token_history_) {
+                tfs << t << "\n";
+            }
+            tfs.close();
+        }
     }
 
     void load_json_file(const std::string& path) {
@@ -288,6 +303,25 @@ private:
             }
         }
         RCLCPP_INFO(get_logger(), "逐行解析完成，共加载 %zu 条消息", msg_history_.size());
+
+        // 尝试加载 token 历史
+        std::string tokens_path = path + ".tokens";
+        std::ifstream tfs(tokens_path);
+        msg_token_history_.clear();
+        if (tfs) {
+            std::string tline;
+            while (std::getline(tfs, tline)) {
+                if (tline.empty()) continue;
+                try {
+                    msg_token_history_.push_back(std::stoi(tline));
+                } catch (...) {
+                    msg_token_history_.push_back(-1);
+                }
+            }
+            tfs.close();
+        }
+        sync_token_history();
+        RCLCPP_INFO(get_logger(), "token 历史: %zu 条", msg_token_history_.size());
     }
 
     bool fetch_system_prompt(std::string& prompt) {
@@ -322,10 +356,12 @@ private:
         if (!check_msg(last_msg)) {
             // 消息无效，弹出无效消息，注入提醒
             msg_history_.erase(msg_history_.size() - 1);
+            if (!msg_token_history_.empty()) msg_token_history_.pop_back();
             msg_history_.push_back({
                 {"role", "user"},
                 {"content", "[系统] 检测到无效的消息格式，已忽略。请继续。"}
             });
+            msg_token_history_.push_back(-1);
             save_current_json();
             return false;
         }
@@ -405,18 +441,29 @@ private:
                 {"role", "assistant"},
                 {"content", "[System: LLM 调用失败]"}
             });
+            msg_token_history_.push_back(-1);
         } else {
             // 修复非数组的 tool_calls
             if (reply.contains("tool_calls") && reply["tool_calls"].is_object()) {
                 reply["tool_calls"] = json::array({reply["tool_calls"]});
             }
             msg_history_.push_back(reply);
+            msg_token_history_.push_back(current_input_tokens_);
         }
         save_current_json();
 
         if (compress_cut_idx_ == 0 &&
             current_input_tokens_ > (int)((1.0 - keep_context_ratio_) * max_context_tokens_)) {
-            compress_cut_idx_ = (int)msg_history_.size();
+            // 在 token 历史中找第一个超过阈值的消息索引
+            int threshold = (int)((1.0 - keep_context_ratio_) * max_context_tokens_);
+            int cut = (int)msg_token_history_.size();
+            for (int k = 0; k < (int)msg_token_history_.size(); ++k) {
+                if (msg_token_history_[k] > threshold) {
+                    cut = k + 1;  // 从下一条开始保留
+                    break;
+                }
+            }
+            compress_cut_idx_ = cut;
         }
         return (current_input_tokens_ > max_context_tokens_);
     }
@@ -441,6 +488,7 @@ private:
             {"role", "user"},
             {"content", "在本架构中用户无法查看本条回复，选择合适的消息渠道回复，或使用 sleep 5 静默。"}
         });
+        msg_token_history_.push_back(-1);
         save_current_json();
         append_input_snapshot();
         return false;
@@ -456,6 +504,7 @@ private:
         }
         for (auto& tr : tool_results) {
             msg_history_.push_back(tr);
+            msg_token_history_.push_back(-1);
         }
         save_current_json();
         // 只执行工具，追加结果，不调 LLM，下一轮小循环自然会处理
@@ -589,6 +638,7 @@ private:
         if (!snapshot_client_->wait_for_service(std::chrono::seconds(2))) {
             RCLCPP_WARN(get_logger(), "input snapshot 服务不可用，跳过");
             msg_history_.push_back({{"role", "user"}, {"content", "{}"}});
+            msg_token_history_.push_back(-1);
             save_current_json();
             return true;
         }
@@ -605,8 +655,10 @@ private:
         if (needs_post_compress_macro_) {
             needs_post_compress_macro_ = false;
             msg_history_.push_back({{"role", "user"}, {"content", "上下文已压缩。上方概要包含了压缩前内容的摘要，请自然地继续对话。"}});
+            msg_token_history_.push_back(-1);
         }
         msg_history_.push_back({{"role", "user"}, {"content", snapshot_str}});
+        msg_token_history_.push_back(-1);
         save_current_json();
         return true;
     }
@@ -627,6 +679,17 @@ private:
         return false;
     }
 
+
+    // ---------- token 历史同步 ----------
+    void sync_token_history() {
+        while (msg_token_history_.size() < msg_history_.size()) {
+            msg_token_history_.push_back(-1);
+        }
+        while (msg_token_history_.size() > msg_history_.size()) {
+            msg_token_history_.pop_back();
+        }
+    }
+
     // ---------- 成员变量 ----------
     std::string agent_name_;
     std::string context_dir_;
@@ -637,6 +700,7 @@ private:
     int current_input_tokens_ = 0;
     bool needs_post_compress_macro_ = false;
     int compress_cut_idx_ = 0;
+    std::vector<int> msg_token_history_;  // 每条消息对应的累计 input token 数，-1 表示无
 
     std::unique_ptr<openai_client::OpenAIClient> openai_client_;
 
