@@ -116,7 +116,7 @@ static json do_search(const std::string& query, int max_r, int timeout_s,
     CURL* c = curl_easy_init();
     if (!c) { result["error"] = "curl init failed"; return result; }
 
-    std::string url = "https://www.bing.com/search?q=";
+    std::string url = "https://cn.bing.com/search?q=";
     char* esc = curl_easy_escape(c, query.c_str(), query.size());
     url += esc;
     curl_free(esc);
