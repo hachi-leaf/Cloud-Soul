@@ -383,6 +383,71 @@ body {
 .msgs::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
 /* highlight.js theme */
+
+/* ── Sidebar ── */
+.app-wrap { display:flex; height:100vh; overflow:hidden; }
+.sidebar {
+  width:240px; flex-shrink:0;
+  background: var(--surface-variant);
+  display:flex; flex-direction:column;
+  border-right: 1px solid var(--border);
+  transition: width .25s cubic-bezier(0.05,0.7,0.1,1);
+  overflow:hidden;
+}
+.sidebar.collapsed { width:0; border-right:none; }
+.sidebar-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 14px 16px;
+  font-size:13px; font-weight:600; color:var(--text-secondary);
+  text-transform:uppercase; letter-spacing:.5px;
+  flex-shrink:0;
+}
+.sidebar-header-title { flex:1; }
+.sidebar-header-count {
+  font-size:11px; color:var(--text-tertiary);
+  background:var(--border); border-radius:var(--radius-sm);
+  padding:2px 8px; margin-right:6px;
+}
+.sidebar-refresh {
+  width:28px; height:28px; border:none; background:transparent;
+  border-radius:50%; cursor:pointer; font-size:16px;
+  color:var(--text-secondary); display:flex;
+  align-items:center; justify-content:center;
+  transition: all .2s;
+}
+.sidebar-refresh:hover { background:var(--border); }
+.sidebar-refresh.spin { animation: spin .6s ease-in-out; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.sidebar-refresh:active { transform: rotate(45deg); }
+.sidebar-list {
+  flex:1; overflow-y:auto; padding:0 8px 8px;
+}
+.sidebar-empty {
+  text-align:center; padding:40px 16px;
+  font-size:13px; color:var(--text-tertiary);
+}
+.sidebar-node {
+  display:flex; align-items:center; gap:10px;
+  padding:10px 12px; border-radius:50px;
+  cursor:default; transition:background .15s;
+  font-size:13px; color:var(--text);
+  font-family: var(--font-body);
+}
+.sidebar-node:hover { background:var(--border); }
+.sidebar-node .dot {
+  width:8px; height:8px; border-radius:50%;
+  background: #34a853; flex-shrink:0;
+}
+.sidebar-toggle {
+  width:40px; height:40px; border:none; background:transparent;
+  border-radius:50%; cursor:pointer; font-size:20px;
+  color:var(--text-secondary); display:flex;
+  align-items:center; justify-content:center;
+  transition: background .15s;
+}
+.sidebar-toggle:hover { background:var(--border); }
+.main-area { flex:1; display:flex; flex-direction:column; min-width:0; overflow:hidden; }
+.appbar-left { display:flex; align-items:center; gap:4px; min-width:140px; }
 .hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-section,.hljs-link{color:#d73a49}
 .hljs-string,.hljs-addition,.hljs-attr{color:#032f62}
 .hljs-title,.hljs-title.function_{color:#6f42c1}
@@ -407,8 +472,19 @@ body {
 </style>
 </head>
 <body>
-
+<div class="app-wrap">
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header"><span class="sidebar-header-title">Active Nodes</span><div style="display:flex;align-items:center;gap:6px"><span class="sidebar-header-count" id="nodeCount">—</span><button class="sidebar-refresh" id="refreshBtn" onclick="spinRefresh()" title="刷新">↻</button></div></div>
+  <div class="sidebar-list" id="sidebarList">
+    <div class="sidebar-empty">Loading...</div>
+  </div>
+</div>
+<div class="main-area">
 <div class="appbar">
+  <div class="appbar-left">
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="节点列表">☰</button>
+    <span class="appbar-brand">Cloud Soul</span>
+  </div>
   <div class="appbar-title">Adam</div>
   <div class="appbar-actions">
     <button class="icon-btn" onclick="td()" title="主题" id="darkBtn">🌙</button>
@@ -486,6 +562,38 @@ async function poll(){
   }
 }
 
+
+/* ── Sidebar ── */
+async function loadNodes(){
+  try{const r=await fetch(H_URL+'/nodes');const d=await r.json();
+  const list=document.getElementById('sidebarList');
+  const count=document.getElementById('nodeCount');
+  if(!d.nodes||!d.nodes.length){
+    list.innerHTML='<div class="sidebar-empty">No nodes</div>';
+    count.textContent='0';return;
+  }
+  count.textContent=d.nodes.length;
+  list.innerHTML=d.nodes.map(n=>{
+    const name=n.replace(/^\/adam\//,'');
+    return '<div class="sidebar-node"><span class="dot"></span>'+name+'</div>';
+  }).join('');
+  }catch(e){
+    document.getElementById('sidebarList').innerHTML='<div class="sidebar-empty">Offline</div>';
+    document.getElementById('nodeCount').textContent='—';
+  }
+}
+function toggleSidebar(){
+  document.getElementById('sidebar').classList.toggle('collapsed');
+}
+function spinRefresh(){
+  const btn=document.getElementById('refreshBtn');
+  btn.classList.add('spin');
+  setTimeout(()=>btn.classList.remove('spin'),600);
+  loadNodes();
+}
+setInterval(loadNodes,10000);
+loadNodes();
+
 async function init(){
   try{const r=await fetch(H_URL+'/history');const d=await r.json();if(d.messages)d.messages.forEach(m=>am(m.msg,m.role,m.files,m.ts));if(d.last_seq!==undefined)_lastSeq=d.last_seq;}catch(e){}
   stt.textContent='就绪';poll();
@@ -524,5 +632,7 @@ ff.onchange=()=>{for(const f of ff.files){if(!selFiles.some(sf=>sf.file.name===f
 function td(){document.body.classList.toggle('dark');const d=document.body.classList.contains('dark');document.getElementById('darkBtn').textContent=d?'☀':'🌙';localStorage.setItem('cs-theme-google',d?'dark':'light');}
 (function(){const v=localStorage.getItem('cs-theme-google');if(v==='dark'){document.body.classList.add('dark');document.getElementById('darkBtn').textContent='☀';}})();
 </script>
+</div>
+</div>
 </body>
 </html>
