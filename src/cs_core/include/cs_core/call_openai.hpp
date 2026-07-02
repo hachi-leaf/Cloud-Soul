@@ -81,8 +81,8 @@ public:
     std::string get_tool_choice() const;
 
     // LLM API 超时（秒），0 表示不设超时
-    void set_timeout(long timeout_sec);
-    long get_timeout() const;
+    void set_timeout(double timeout_sec);
+    double get_timeout() const;
 
     // ---------- 消息管理 ----------
     /// 将一条消息追加到内部历史。消息必须为对象，且至少包含 "role" 字段
