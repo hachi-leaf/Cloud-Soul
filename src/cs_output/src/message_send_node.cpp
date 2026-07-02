@@ -160,7 +160,7 @@ static constexpr const char* MESSAGE_SEND_INFO_JSON = R"json({
         },
         "message": {
           "type": "string",
-          "description": "ros_msg, web_chat 渠道消息内容 (ros_msg 不支持 MarkDown 渲染，web_chat 支持 MarkDown 渲染)"
+          "description": "ros_msg, web_chat 渠道消息内容 (ros_msg 是命令行，不支持 MarkDown 渲染，web_chat 支持完整 MarkDown 渲染，建议使用 MarkDown 语法)"
         }
       }
     }

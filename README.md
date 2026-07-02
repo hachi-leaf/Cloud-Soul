@@ -143,7 +143,7 @@ cd Cloud-Soul && colcon build --symlink-install
 
 | Metric | Value |
 |--------|-------|
-| Latest | `v0.4.0-Beta` |
+| Latest | `v0.5.0-Beta` |
 | Packages | 4 (`cs_core` `cs_input` `cs_output` `cs_interfaces`) |
 | Tools | 6 (`shell_exec` `file_rdwt` `message_send` `web_search` `web_fetch` `skills_loader`) |
 | Sensors | 3 (`system_status` `message_receive` `ros_msg`) |
@@ -158,3 +158,20 @@ cd Cloud-Soul && colcon build --symlink-install
 *"The soul is in the cloud, the body is everywhere."*
 
 </div>
+
+## v0.5.0-Beta (2026-07-02)
+
+### 上下文压缩重构
+- `summary_turns` → `keep_context_ratio`，语义改为保留比例 [0.0, 0.5]
+- 压缩消息顺序: sys_prompt → 压缩概要 → 保留前文
+- `compress_cut_idx_` 自动计算切点
+
+### LLM API 超时
+- 新增参数 `llm_timeout_sec`（double，秒精度，默认 30.0）
+- 底层 `CURLOPT_TIMEOUT_MS`，支持亚秒级超时
+
+### UI 改进
+- 侧边栏 Active Nodes 列表，10s 自动刷新
+- 输入框布局优化（按钮移到下方，文字居中）
+- 欢迎页改版（白色 A，全英文）
+- 时间戳精确到秒

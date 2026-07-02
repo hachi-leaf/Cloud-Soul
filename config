@@ -132,8 +132,10 @@ def main():
     print(f"  {T}▶ 核心参数{C_RESET}")
     max_ctx = int(ask("max_context_tokens   上下文压缩阈值",
                        default="200000"))
-    summary = int(ask("summary_turns         压缩保留最近 N 轮",
-                       default="30"))
+    keep_ctx_ratio = float(ask("keep_context_ratio    上下文保留比例 [0.0,0.5]",
+                       default="30.0"))
+    llm_timeout = float(ask("llm_timeout_sec      LLM API 超时 (秒)",
+                       default="0.5"))
     default_timeout = float(ask("default_timeout      工具调用超时 (秒)",
                                  default="30.0"))
     cancel_timeout = float(ask("cancel_timeout       取消等待超时 (秒)",
@@ -222,7 +224,7 @@ def main():
         },
         "loop": {
             "max_context_tokens": max_ctx,
-            "summary_turns": summary,
+            "keep_context_ratio": keep_ctx_ratio,
             "default_timeout": default_timeout,
             "cancel_timeout": cancel_timeout,
             "delay_timeout": delay_timeout,
@@ -278,7 +280,7 @@ def main():
             f.write(f"  push_retry_max: {push_retry_max}\n")
             f.write("loop:\n")
             f.write(f"  max_context_tokens: {max_ctx}\n")
-            f.write(f"  summary_turns: {summary}\n")
+            f.write(f"  keep_context_ratio: {keep_ctx_ratio}\n")
             f.write(f"  default_timeout: {default_timeout}\n")
             f.write(f"  cancel_timeout: {cancel_timeout}\n")
             f.write(f"  delay_timeout: {delay_timeout}\n")

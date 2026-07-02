@@ -47,14 +47,16 @@ public:
         declare_parameter<std::string>("agent_name", agent_name);
         declare_parameter<std::string>("context_dir", "");
         declare_parameter<int>("max_context_tokens", 32768);
-        declare_parameter<int>("summary_turns", 10);
+        declare_parameter<double>("llm_timeout_sec", 30.0);
+        declare_parameter<double>("keep_context_ratio", 0.5);
         declare_parameter<std::string>("openai_base_url", "");
         declare_parameter<std::string>("openai_api_key", "");
         declare_parameter<std::string>("openai_model", "");
 
         context_dir_ = get_parameter("context_dir").as_string();
         max_context_tokens_ = get_parameter("max_context_tokens").as_int();
-        summary_turns_ = get_parameter("summary_turns").as_int();
+        double llm_timeout_sec = get_parameter("llm_timeout_sec").as_double();
+        keep_context_ratio_ = std::clamp(get_parameter("keep_context_ratio").as_double(), 0.0, 0.5);
         std::string openai_base_url = get_parameter("openai_base_url").as_string();
         std::string openai_api_key = get_parameter("openai_api_key").as_string();
         std::string openai_model = get_parameter("openai_model").as_string();
@@ -65,6 +67,7 @@ public:
 
         openai_client_ = std::make_unique<openai_client::OpenAIClient>(
             openai_base_url, openai_api_key, openai_model);
+        openai_client_->set_timeout(llm_timeout_sec);
 
         memory_recall_client_ = create_client<MemoryRecall>(
             "/" + agent_name_ + "/memory_recall");
@@ -110,14 +113,12 @@ public:
                 bool compress_ok = false;
                 std::string summary;
                 json recent_msgs = json::array();
-                int start_idx = std::max(0, (int)msg_history_.size() - summary_turns_);
-                for (int i = start_idx; i < (int)msg_history_.size(); ++i) {
+                for (int i = std::max(0, compress_cut_idx_); i < (int)msg_history_.size(); ++i) {
                     recent_msgs.push_back(msg_history_[i]);
                 }
 
 
                 // 去掉 recent_msgs 开头连续的 tool 消息，避免 LLM 报错
-                // （tool 消息必须以 assistant(tool_calls) 开头，否则违反 API 规范）
                 while (!recent_msgs.empty() && recent_msgs[0].value("role", "") == "tool") {
                     recent_msgs.erase(recent_msgs.begin());
                 }
@@ -147,14 +148,20 @@ public:
                 RCLCPP_INFO(get_logger(), "归档成功，概要长度: %zu", summary.size());
 
                 json new_msgs = json::array();
+
+                // 1. 系统提示词
                 std::string sys_prompt;
                 if (!fetch_system_prompt(sys_prompt)) {
                     RCLCPP_ERROR(get_logger(), "无法获取系统提示词，退出");
                     break;
                 }
                 new_msgs.push_back({{"role", "system"}, {"content", sys_prompt}});
-                std::string summary_content = "记忆压缩前的内容概要：" + summary;
-                new_msgs.push_back({{"role", "user"}, {"content", summary_content}});
+
+                // 2. 压缩概要
+                std::string summary_content = "记忆压缩概要：以下为之前对话的压缩摘要。\n" + summary;
+                new_msgs.push_back({{"role", "system"}, {"content", summary_content}});
+
+                // 3. 保留的前文
                 for (const auto& msg : recent_msgs) {
                     new_msgs.push_back(msg);
                 }
@@ -162,9 +169,9 @@ public:
                 create_new_json_file();
                 save_current_json();
 
-                // 压缩后不立即调用 LLM，token 计为 0，让主循环自然处理
                 current_input_tokens_ = 0;
-                needs_post_compress_macro_ = true;  // 下次快照注入宏文本
+                needs_post_compress_macro_ = true;
+                compress_cut_idx_ = 0;
                 RCLCPP_INFO(get_logger(), "压缩完成，新消息数: %zu", msg_history_.size());
                 continue;
             } else {
@@ -407,6 +414,10 @@ private:
         }
         save_current_json();
 
+        if (compress_cut_idx_ == 0 &&
+            current_input_tokens_ > (int)((1.0 - keep_context_ratio_) * max_context_tokens_)) {
+            compress_cut_idx_ = (int)msg_history_.size();
+        }
         return (current_input_tokens_ > max_context_tokens_);
     }
 
@@ -620,11 +631,12 @@ private:
     std::string agent_name_;
     std::string context_dir_;
     int max_context_tokens_;
-    int summary_turns_;
+    double keep_context_ratio_;
     json msg_history_;
     std::string current_json_path_;
     int current_input_tokens_ = 0;
     bool needs_post_compress_macro_ = false;
+    int compress_cut_idx_ = 0;
 
     std::unique_ptr<openai_client::OpenAIClient> openai_client_;
 

@@ -79,7 +79,8 @@ PULL_RETRY=$(yaml_get "repo.pull_retry_max")
 PUSH_RETRY=$(yaml_get "repo.push_retry_max")
 
 MAX_CTX=$(yaml_get "loop.max_context_tokens")
-SUMMARY=$(yaml_get "loop.summary_turns")
+KEEP_CTX_RATIO=$(yaml_get "loop.keep_context_ratio")
+LLM_TIMEOUT=$(yaml_get "loop.llm_timeout_sec")
 DEFAULT_TIMEOUT=$(yaml_get "loop.default_timeout")
 CANCEL_TIMEOUT=$(yaml_get "loop.cancel_timeout")
 DELAY_TIMEOUT=$(yaml_get "loop.delay_timeout")
@@ -196,7 +197,7 @@ ros2 launch cs_output cs_output.launch.py \
 OUTPUT_PID=$!
 echo "   PID: $OUTPUT_PID"
 
-sleep 3
+sleep 1
 
 # ═══════════════════════════════════════════════════════
 #  启动 cs_core
@@ -213,7 +214,8 @@ ros2 launch cs_core cs_core.launch.py \
     push_retry_max:="$PUSH_RETRY" \
     context_dir:="$CONTEXT_DIR" \
     max_context_tokens:="$MAX_CTX" \
-    summary_turns:="$SUMMARY" \
+    keep_context_ratio:="$KEEP_CTX_RATIO" \
+    llm_timeout_sec:="$LLM_TIMEOUT" \
     openai_base_url:="$LLM_URL" \
     openai_api_key:="$LLM_KEY" \
     openai_model:="$LLM_MODEL" \
@@ -238,7 +240,7 @@ done
 
 echo "🚀 启动 web_chat (port $WEB_CHAT_PORT)..."
 if [ -f "$WEB_CHAT_SCRIPT" ]; then
-    python3 "$WEB_CHAT_SCRIPT" --agent "$AGENT_NAME" --port "$WEB_CHAT_PORT" \
+    python3 "$WEB_CHAT_SCRIPT" --agent "$AGENT_NAME" --port "$WEB_CHAT_PORT" --avatar-dir "$SOUL_DIR/avatar" \
         &> /tmp/cloudsoul_web_chat.log &
     WEB_PID=$!
     echo "   PID: $WEB_PID"
