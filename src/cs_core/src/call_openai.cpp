@@ -29,6 +29,7 @@ struct OpenAIClient::Impl {
     std::vector<std::string> stop_;
     bool logprobs_ = false;
     std::string tool_choice_ = "auto";
+    long timeout_sec_ = 0;  // 0 = no timeout
 
     // ---------- 消息历史 ----------
     std::vector<nlohmann::json> messages_;
@@ -156,6 +157,15 @@ void OpenAIClient::set_tool_choice(const std::string& choice) {
 std::string OpenAIClient::get_tool_choice() const {
     std::lock_guard<std::mutex> lock(impl_->data_mutex_);
     return impl_->tool_choice_;
+}
+
+void OpenAIClient::set_timeout(long timeout_sec) {
+    std::lock_guard<std::mutex> lock(impl_->data_mutex_);
+    impl_->timeout_sec_ = timeout_sec;
+}
+long OpenAIClient::get_timeout() const {
+    std::lock_guard<std::mutex> lock(impl_->data_mutex_);
+    return impl_->timeout_sec_;
 }
 
 // ---------- 消息管理 ----------
@@ -374,6 +384,9 @@ nlohmann::json OpenAIClient::call_api(bool stream,
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_str.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body_str.size()));
+    if (impl_->timeout_sec_ > 0) {
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, impl_->timeout_sec_);
+    }
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
     if (input_tokens) {
