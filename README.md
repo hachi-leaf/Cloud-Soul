@@ -143,7 +143,7 @@ cd Cloud-Soul && colcon build --symlink-install
 
 | Metric | Value |
 |--------|-------|
-| Latest | `v0.5.3-Beta` |
+| Latest | `v0.5.4-Beta` |
 | Packages | 4 (`cs_core` `cs_input` `cs_output` `cs_interfaces`) |
 | Tools | 6 (`shell_exec` `file_rdwt` `message_send` `web_search` `web_fetch` `skills_loader`) |
 | Sensors | 3 (`system_status` `message_receive` `ros_msg`) |
@@ -158,6 +158,13 @@ cd Cloud-Soul && colcon build --symlink-install
 *"The soul is in the cloud, the body is everywhere."*
 
 </div>
+
+## v0.5.4-Beta (2026-07-02)
+
+### 修复
+- **上下文压缩切点修复**: `compress_cut_idx_` 改用 LLM 返回的真实 `prompt_tokens` 计算，解决压缩后上下文丢失
+- 新增 `msg_token_history_` 平行数组，持久化到 `.tokens` 文件
+- 向前兼容：无 `.tokens` 时退化为旧行为
 
 ## v0.5.3-Beta (2026-07-02)
 
