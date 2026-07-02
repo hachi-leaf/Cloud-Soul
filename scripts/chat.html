@@ -377,6 +377,13 @@ body {
   cursor: default;
 }
 
+.status-bar {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 6px 0 0;
+}
+
 /* ── Scrollbar ── */
 .msgs::-webkit-scrollbar { width: 6px; }
 .msgs::-webkit-scrollbar-track { background: transparent; }
@@ -384,6 +391,24 @@ body {
 .msgs::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
 /* highlight.js theme */
+.hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-section,.hljs-link{color:#d73a49}
+.hljs-string,.hljs-addition,.hljs-attr{color:#032f62}
+.hljs-title,.hljs-title.function_{color:#6f42c1}
+.hljs-built_in,.hljs-type,.hljs-params{color:#005cc5}
+.hljs-number,.hljs-meta{color:#005cc5}
+.hljs-comment,.hljs-quote{color:#6a737d}
+.hljs-regexp,.hljs-symbol,.hljs-variable,.hljs-template-variable{color:#e36209}
+.hljs-deletion{color:#b31d28}
+.hljs-emphasis{font-style:italic}
+.hljs-strong{font-weight:600}
+.dark .hljs-keyword,.dark .hljs-selector-tag,.dark .hljs-literal{color:#ff7b72}
+.dark .hljs-string,.dark .hljs-addition,.dark .hljs-attr{color:#a5d6ff}
+.dark .hljs-title,.dark .hljs-title.function_{color:#d2a8ff}
+.dark .hljs-built_in,.dark .hljs-type,.dark .hljs-params{color:#79c0ff}
+.dark .hljs-number,.dark .hljs-meta{color:#79c0ff}
+.dark .hljs-comment,.dark .hljs-quote{color:#8b949e}
+.dark .hljs-regexp,.dark .hljs-symbol,.dark .hljs-variable{color:#ffa657}
+.dark .hljs-deletion{color:#ffdcd7}
 
 /* ── Sidebar ── */
 .app-wrap { display:flex; height:100vh; overflow:hidden; }
@@ -457,25 +482,6 @@ body {
 }
 
 .appbar-left { display:flex; align-items:center; gap:4px; min-width:140px; }
-.hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-section,.hljs-link{color:#d73a49}
-.hljs-string,.hljs-addition,.hljs-attr{color:#032f62}
-.hljs-title,.hljs-title.function_{color:#6f42c1}
-.hljs-built_in,.hljs-type,.hljs-params{color:#005cc5}
-.hljs-number,.hljs-meta{color:#005cc5}
-.hljs-comment,.hljs-quote{color:#6a737d}
-.hljs-regexp,.hljs-symbol,.hljs-variable,.hljs-template-variable{color:#e36209}
-.hljs-deletion{color:#b31d28}
-.hljs-emphasis{font-style:italic}
-.hljs-strong{font-weight:600}
-.dark .hljs-keyword,.dark .hljs-selector-tag,.dark .hljs-literal{color:#ff7b72}
-.dark .hljs-string,.dark .hljs-addition,.dark .hljs-attr{color:#a5d6ff}
-.dark .hljs-title,.dark .hljs-title.function_{color:#d2a8ff}
-.dark .hljs-built_in,.dark .hljs-type,.dark .hljs-params{color:#79c0ff}
-.dark .hljs-number,.dark .hljs-meta{color:#79c0ff}
-.dark .hljs-comment,.dark .hljs-quote{color:#8b949e}
-.dark .hljs-regexp,.dark .hljs-symbol,.dark .hljs-variable{color:#ffa657}
-.dark .hljs-deletion{color:#ffdcd7}
-
 
 .fi{width:26px;height:32px;flex-shrink:0;border-radius:2px}.up-chip .fi{width:22px;height:28px}
 </style>
@@ -538,10 +544,10 @@ marked.setOptions({breaks:true,gfm:true});
 
 const HAS_UA=new Image();HAS_UA.src=H_URL+'/config/avatar/user.png';HAS_UA.onerror=()=>{HAS_UA.ok=0;};HAS_UA.onload=()=>{HAS_UA.ok=1;};
 const HAS_AA=new Image();HAS_AA.src=H_URL+'/config/avatar/agent.png';HAS_AA.onerror=()=>{HAS_AA.ok=0;};HAS_AA.onload=()=>{HAS_AA.ok=1;};
-function avaHTML(role){const img=role==='user'?HAS_UA:HAS_AA;if(img.ok)return '<div class=\"ava\"><img src=\"'+H_URL+'/config/avatar/'+role+'.png\"></div>';return role==='agent'?'<div class=\"agent-ava\">A</div>':'';}
+function avaHTML(role){const img=role==='user'?HAS_UA:HAS_AA;if(img.ok)return '<div class="ava"><img src="'+H_URL+'/config/avatar/'+role+'.png"></div>';return role==='agent'?'<div class="agent-ava">A</div>':'';}
 
-function wrapCodeBlocks(el){el.querySelectorAll('.bub pre').forEach(pre=>{if(pre.closest('.wrap'))return;const cl=pre.querySelector('code');const lang=(cl&&cl.className.match(/language-(\w+)/)||[])[1]||'';const wrap=document.createElement('div');wrap.className='wrap';const banner=document.createElement('div');banner.className='cb-banner';const langSpan=document.createElement('span');langSpan.textContent=lang||'code';const copyIcon='<svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"margin-right:4px\"><rect x=\"9\" y=\"9\" width=\"13\" height=\"13\" rx=\"2\" ry=\"2\"/><path d=\"M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1\"/></svg>';
-const checkIcon='<svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"margin-right:4px\"><polyline points=\"20 6 9 17 4 12\"/></svg>';
+function wrapCodeBlocks(el){el.querySelectorAll('.bub pre').forEach(pre=>{if(pre.closest('.wrap'))return;const cl=pre.querySelector('code');const lang=(cl&&cl.className.match(/language-(\w+)/)||[])[1]||'';const wrap=document.createElement('div');wrap.className='wrap';const banner=document.createElement('div');banner.className='cb-banner';const langSpan=document.createElement('span');langSpan.textContent=lang||'code';const copyIcon='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const checkIcon='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><polyline points="20 6 9 17 4 12"/></svg>';
 const copyBtn=document.createElement('button');copyBtn.innerHTML=copyIcon+'复制';copyBtn.className='cb-copy-btn';
 copyBtn.onclick=()=>{const code=pre.querySelector('code')||pre;navigator.clipboard.writeText(code.textContent).then(()=>{copyBtn.innerHTML=checkIcon+'复制';setTimeout(()=>{copyBtn.innerHTML=copyIcon+'复制';},2000);});};
 banner.appendChild(langSpan);banner.appendChild(copyBtn);wrap.appendChild(banner);pre.style.cssText='margin:0!important;border-radius:0 0 16px 16px;padding:16px;white-space:pre-wrap;word-break:break-all';pre.parentNode.insertBefore(wrap,pre);wrap.appendChild(pre);});}
@@ -556,9 +562,9 @@ function am(text,role,files,ts_server){
   const row=document.createElement('div');row.className='msg-row '+role;
   if(files&&files.length)text=text.replace(/\n\[附件:.*\]$/,'');
   let html=role==='user'?text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'):marked.parse(text||''),filesHtml='';
-  if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class=\"fchip\">'+fileIcon(nm)+'<div class=\"fc\"><span class=\"fn\">'+nm+'</span><span class=\"fs\">'+sz+'</span></div></div>';});}
+  if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class="fchip">'+fileIcon(nm)+'<div class="fc"><span class="fn">'+nm+'</span><span class="fs">'+sz+'</span></div></div>';});}
   const ts=ts_server||new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
-  row.innerHTML=avaHTML(role)+'<div class=\"msg-body\"><div class=\"bub\">'+html+'</div>'+(filesHtml?'<div class=\"attaches\">'+filesHtml+'</div>':'')+'<div class=\"time\">'+ts+'</div></div>';
+  row.innerHTML=avaHTML(role)+'<div class="msg-body"><div class="bub">'+html+'</div>'+(filesHtml?'<div class="attaches">'+filesHtml+'</div>':'')+'<div class="time">'+ts+'</div></div>';
   mi.appendChild(row);highlightCode(row);ms.scrollTop=ms.scrollHeight;
 }
 
@@ -624,7 +630,7 @@ async function sm(){
 }
 
 function renderUpbar(){
-  let h='';selFiles.forEach((f,i)=>{const sz=szf(f.file.size);const cls=f.status==='err'?' style=\"color:#ea4335\"':'';h+='<div class=\"up-chip\">'+fileIcon(f.file.name)+'<span class=\"c-name\" title=\"'+f.file.name.replace(/\"/g,'&quot;')+'\">'+f.file.name.replace(/</g,'&lt;')+'</span><span>'+sz+'</span><span class=\"rm\" onclick=\"selFiles.splice('+i+',1);renderUpbar();ar()\">&times;</span></div>';});
+  let h='';selFiles.forEach((f,i)=>{const sz=szf(f.file.size);const cls=f.status==='err'?' style="color:#ea4335"':'';h+='<div class="up-chip">'+fileIcon(f.file.name)+'<span class="c-name" title="'+f.file.name.replace(/"/g,'&quot;')+'">'+f.file.name.replace(/</g,'&lt;')+'</span><span>'+sz+'</span><span class="rm" onclick="selFiles.splice('+i+',1);renderUpbar();ar()">&times;</span></div>';});
   ub.innerHTML=h;
 }
 async function uploadAll(){
