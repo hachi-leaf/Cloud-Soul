@@ -323,7 +323,6 @@ body {
 
 .inp-bar {
   display:flex; align-items:flex-end; gap:8px;
-  position: relative;
   background: var(--surface-variant);
   border: 1px solid transparent;
   border-radius: var(--radius-lg);
@@ -338,11 +337,11 @@ body {
 }
 
 .inp-bar textarea {
-  width:100%; border:none; background:transparent; color:var(--text);
+  flex:1; border:none; background:transparent; color:var(--text);
   font-size: 15px; line-height:1.5; resize:none; outline:none;
   min-height: 80px; max-height:200px;
   font-family: var(--font-body);
-  padding: 8px 12px 8px 12px;
+  padding: 8px 4px;
 }
 .inp-bar textarea::placeholder { color: var(--text-tertiary); }
 
@@ -357,8 +356,7 @@ body {
   color: var(--text-secondary);
   flex-shrink: 0;
   transition: background .15s;
-  position: absolute; right: 64px; bottom: 8px;
-}
+  }
 .action-btn:hover { background: var(--border); }
 
 .send-btn {
@@ -374,8 +372,7 @@ body {
   justify-content: center;
   box-shadow: var(--shadow-2);
   transition: all .2s cubic-bezier(0.05,0.7,0.1,1) !important;
-  position: absolute; right: 8px; bottom: 8px;
-}
+  }
 .send-btn:hover:not(:disabled) {
   box-shadow: var(--shadow-3), 0 0 0 4px rgba(26,115,232,0.15);
   transform: scale(1.05);
