@@ -88,6 +88,11 @@ public:
         qos.reliable();
         info_pub_ = create_publisher<std_msgs::msg::String>(topic, qos);
 
+        // 定时发布 info 作为心跳
+        publish_timer_ = create_wall_timer(
+            std::chrono::duration<double>(1.0 / info_rate_),
+            [this]() { refresh_info(); });
+
         action_server_ = rclcpp_action::create_server<ExecuteTool>(
             this,
             "/" + agent_name_ + "/output/skills_loader",
@@ -414,6 +419,7 @@ private:
     std::thread work_thread_;
 
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr info_pub_;
+    rclcpp::TimerBase::SharedPtr publish_timer_;
     rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
 };
 
