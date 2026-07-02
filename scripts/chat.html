@@ -90,6 +90,7 @@ body {
   color: var(--text-secondary);
   transition: background .15s;
   font-size: 18px;
+  margin-right: -8px;
 }
 .icon-btn:hover { background: var(--surface-variant); }
 
@@ -574,7 +575,7 @@ function am(text,role,files,ts_server){
   if(files&&files.length)text=text.replace(/\n\[附件:.*\]$/,'');
   let html=role==='user'?text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'):marked.parse(text||''),filesHtml='';
   if(files&&files.length){files.forEach(f=>{const nm=(f.original_name||f.name||'file').replace(/</g,'&lt;');const sz=f.size_human||szf(f.size||0);filesHtml+='<div class="fchip">'+fileIcon(nm)+'<div class="fc"><span class="fn">'+nm+'</span><span class="fs">'+sz+'</span></div></div>';});}
-  const ts=ts_server||new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+  const ts=ts_server||new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   row.innerHTML=avaHTML(role)+'<div class="msg-body"><div class="bub">'+html+'</div>'+(filesHtml?'<div class="attaches">'+filesHtml+'</div>':'')+'<div class="time">'+ts+'</div></div>';
   mi.appendChild(row);highlightCode(row);ms.scrollTop=ms.scrollHeight;
 }
