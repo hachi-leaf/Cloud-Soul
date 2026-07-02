@@ -53,6 +53,7 @@
 #include <nlohmann/json.hpp>
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "cs_interfaces/action/execute_tool.hpp"
 
 using json = nlohmann::json;
@@ -116,7 +117,7 @@ static json do_search(const std::string& query, int max_r, int timeout_s,
     CURL* c = curl_easy_init();
     if (!c) { result["error"] = "curl init failed"; return result; }
 
-    std::string url = "https://www.bing.com/search?q=";
+    std::string url = "https://cn.bing.com/search?q=";
     char* esc = curl_easy_escape(c, query.c_str(), query.size());
     url += esc;
     curl_free(esc);
@@ -130,6 +131,9 @@ static json do_search(const std::string& query, int max_r, int timeout_s,
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(c, CURLOPT_USERAGENT,
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+    struct curl_slist* headers_srch = nullptr;
+    headers_srch = curl_slist_append(headers_srch, "Accept-Language: zh-CN,zh;q=0.9,en;q=0.5");
+    curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers_srch);
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
     if (!proxy.empty()) curl_easy_setopt(c, CURLOPT_PROXY, proxy.c_str());
@@ -169,6 +173,33 @@ static json do_search(const std::string& query, int max_r, int timeout_s,
 // ============================================================
 class WebSearchNode : public rclcpp::Node {
 public:
+    
+    static constexpr const char* INFO_JSON = R"json({
+  "type": "function",
+  "function": {
+    "name": "web_search",
+    "description": "使用 Bing 搜索引擎搜索网页，返回标题、URL 和摘要。",
+    "parameters": {
+      "type": "object",
+      "required": ["query"],
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "搜索关键词"
+        },
+        "max_results": {
+          "type": "integer",
+          "description": "最大结果数，默认 10"
+        },
+        "timeout_sec": {
+          "type": "integer",
+          "description": "超时秒数，默认 30"
+        }
+      }
+    }
+  }
+})json";
+
     explicit WebSearchNode(const std::string& agent_name)
         : Node("web_search_node", agent_name), agent_name_(agent_name)
     {
@@ -200,6 +231,21 @@ public:
             // handle_accepted
             [this](auto goal_handle) { handle_accepted(goal_handle); });
 
+        // Info 发布
+        std::string topic = "/" + agent_name_ + "/output/web_search/info";
+        rclcpp::QoS qos(1);
+        qos.transient_local();
+        qos.reliable();
+        info_pub_ = create_publisher<std_msgs::msg::String>(topic, qos);
+
+        publish_timer_ = create_wall_timer(
+            std::chrono::duration<double>(1.0 / info_rate_),
+            [this]() {
+                std_msgs::msg::String msg;
+                msg.data = INFO_JSON;
+                info_pub_->publish(msg);
+            });
+
         RCLCPP_INFO(get_logger(), "WebSearchNode ready. agent=%s proxy=%s",
                     agent_name_.c_str(), proxy_.empty() ? "none" : proxy_.c_str());
     }
@@ -214,6 +260,8 @@ private:
     std::atomic<bool> canceled_{false};
     std::thread work_thread_;
 
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr info_pub_;
+    rclcpp::TimerBase::SharedPtr publish_timer_;
     rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
 
     // ---------------------------------------------------------
