@@ -53,6 +53,7 @@
 #include <nlohmann/json.hpp>
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "cs_interfaces/action/execute_tool.hpp"
 
 using json = nlohmann::json;
@@ -172,6 +173,33 @@ static json do_search(const std::string& query, int max_r, int timeout_s,
 // ============================================================
 class WebSearchNode : public rclcpp::Node {
 public:
+    
+    static constexpr const char* INFO_JSON = R"json({
+  "type": "function",
+  "function": {
+    "name": "web_search",
+    "description": "使用 Bing 搜索引擎搜索网页，返回标题、URL 和摘要。",
+    "parameters": {
+      "type": "object",
+      "required": ["query"],
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "搜索关键词"
+        },
+        "max_results": {
+          "type": "integer",
+          "description": "最大结果数，默认 10"
+        },
+        "timeout_sec": {
+          "type": "integer",
+          "description": "超时秒数，默认 30"
+        }
+      }
+    }
+  }
+})json";
+
     explicit WebSearchNode(const std::string& agent_name)
         : Node("web_search_node", agent_name), agent_name_(agent_name)
     {
@@ -203,6 +231,21 @@ public:
             // handle_accepted
             [this](auto goal_handle) { handle_accepted(goal_handle); });
 
+        // Info 发布
+        std::string topic = "/" + agent_name_ + "/output/web_search/info";
+        rclcpp::QoS qos(1);
+        qos.transient_local();
+        qos.reliable();
+        info_pub_ = create_publisher<std_msgs::msg::String>(topic, qos);
+
+        publish_timer_ = create_wall_timer(
+            std::chrono::duration<double>(1.0 / info_rate_),
+            [this]() {
+                std_msgs::msg::String msg;
+                msg.data = INFO_JSON;
+                info_pub_->publish(msg);
+            });
+
         RCLCPP_INFO(get_logger(), "WebSearchNode ready. agent=%s proxy=%s",
                     agent_name_.c_str(), proxy_.empty() ? "none" : proxy_.c_str());
     }
@@ -217,6 +260,8 @@ private:
     std::atomic<bool> canceled_{false};
     std::thread work_thread_;
 
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr info_pub_;
+    rclcpp::TimerBase::SharedPtr publish_timer_;
     rclcpp_action::Server<ExecuteTool>::SharedPtr action_server_;
 
     // ---------------------------------------------------------
