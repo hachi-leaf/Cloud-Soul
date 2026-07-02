@@ -261,13 +261,39 @@ static size_t curl_write_cb(void* ptr, size_t sz, size_t nmemb, void* userdata) 
 // ============================================================
 // HTTP 抓取纯函数
 // ============================================================
+
+// ============================================================
+// URL 百分号编码（非 ASCII → %XX）
+// ============================================================
+static std::string url_encode(const std::string& url) {
+    // 快速检测：如果没有非 ASCII 字符，直接返回
+    bool needs_encode = false;
+    for (unsigned char ch : url) {
+        if (ch > 127) { needs_encode = true; break; }
+    }
+    if (!needs_encode) return url;
+
+    std::string encoded;
+    encoded.reserve(url.size() * 3);
+    for (unsigned char ch : url) {
+        if (ch > 127 || ch == ' ') {
+            char buf[4];
+            snprintf(buf, sizeof(buf), "%%%02X", ch);
+            encoded += buf;
+        } else {
+            encoded += ch;
+        }
+    }
+    return encoded;
+}
+
 static json do_fetch(const std::string& url, int timeout_s, size_t max_size_bytes) {
     CURL* c = curl_easy_init();
     if (!c) return {{"error", "curl init failed"}};
 
     std::string html;
     html.reserve(1024 * 1024);
-    curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(c, CURLOPT_URL, url_encode(url).c_str());
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &html);
     curl_easy_setopt(c, CURLOPT_TIMEOUT, static_cast<long>(timeout_s));
