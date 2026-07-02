@@ -130,6 +130,9 @@ static json do_search(const std::string& query, int max_r, int timeout_s,
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(c, CURLOPT_USERAGENT,
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+    struct curl_slist* headers_srch = nullptr;
+    headers_srch = curl_slist_append(headers_srch, "Accept-Language: zh-CN,zh;q=0.9,en;q=0.5");
+    curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers_srch);
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
     if (!proxy.empty()) curl_easy_setopt(c, CURLOPT_PROXY, proxy.c_str());

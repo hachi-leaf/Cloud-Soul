@@ -303,6 +303,9 @@ static json do_fetch(const std::string& url, int timeout_s, size_t max_size_byte
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(c, CURLOPT_USERAGENT,
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36");
+    struct curl_slist* headers_fetch = nullptr;
+    headers_fetch = curl_slist_append(headers_fetch, "Accept-Language: zh-CN,zh;q=0.9,en;q=0.5");
+    curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers_fetch);
     curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "gzip, deflate");
     curl_easy_setopt(c, CURLOPT_MAXFILESIZE_LARGE, static_cast<curl_off_t>(max_size_bytes));
 
