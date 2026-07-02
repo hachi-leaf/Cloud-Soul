@@ -143,7 +143,7 @@ cd Cloud-Soul && colcon build --symlink-install
 
 | Metric | Value |
 |--------|-------|
-| Latest | `v0.5.2-Beta` |
+| Latest | `v0.5.3-Beta` |
 | Packages | 4 (`cs_core` `cs_input` `cs_output` `cs_interfaces`) |
 | Tools | 6 (`shell_exec` `file_rdwt` `message_send` `web_search` `web_fetch` `skills_loader`) |
 | Sensors | 3 (`system_status` `message_receive` `ros_msg`) |
@@ -159,7 +159,7 @@ cd Cloud-Soul && colcon build --symlink-install
 
 </div>
 
-## v0.5.2-Beta (2026-07-02)
+## v0.5.3-Beta (2026-07-02)
 
 ### 上下文压缩重构
 - `summary_turns` → `keep_context_ratio`，语义改为保留比例 [0.0, 0.5]
@@ -176,7 +176,7 @@ cd Cloud-Soul && colcon build --symlink-install
 - 欢迎页改版（白色 A，全英文）
 - 时间戳精确到秒
 
-## v0.5.2-Beta (2026-07-02)
+## v0.5.3-Beta (2026-07-02)
 
 ### 修复
 - skills_loader 加心跳定时器，解决频繁掉线问题
@@ -185,8 +185,13 @@ cd Cloud-Soul && colcon build --symlink-install
 ### 清理
 - 删除所有 test 目录和测试文件
 
-## v0.5.2-Beta (2026-07-02)
+## v0.5.3-Beta (2026-07-02)
 
 ### 修复
 - web_fetch URL 百分号编码，解决中文搜索 HTTP 400 问题
 - output_mgmt 热插拔健壮性 TODO（仅记录，待修复）
+
+## v0.5.3-Beta (2026-07-02)
+
+### UI
+- Cloud Soul 标题对齐微调
