@@ -47,14 +47,14 @@ public:
         declare_parameter<std::string>("agent_name", agent_name);
         declare_parameter<std::string>("context_dir", "");
         declare_parameter<int>("max_context_tokens", 32768);
-        declare_parameter<double>("keep_context_ratio", 0.7);
+        declare_parameter<double>("keep_context_ratio", 0.5);
         declare_parameter<std::string>("openai_base_url", "");
         declare_parameter<std::string>("openai_api_key", "");
         declare_parameter<std::string>("openai_model", "");
 
         context_dir_ = get_parameter("context_dir").as_string();
         max_context_tokens_ = get_parameter("max_context_tokens").as_int();
-        keep_context_ratio_ = std::min(0.5, get_parameter("keep_context_ratio").as_double());
+        keep_context_ratio_ = std::clamp(get_parameter("keep_context_ratio").as_double(), 0.0, 0.5);
         std::string openai_base_url = get_parameter("openai_base_url").as_string();
         std::string openai_api_key = get_parameter("openai_api_key").as_string();
         std::string openai_model = get_parameter("openai_model").as_string();
