@@ -16,6 +16,7 @@ from cs_interfaces.srv import SendMessage
 parser = argparse.ArgumentParser(description='Web Chat Server v3')
 parser.add_argument('--agent', default='agent', help='Agent 名称')
 parser.add_argument('--port', type=int, default=8080, help='监听端口')
+parser.add_argument('--avatar-dir', default=None, help='头像目录路径 (默认 scripts/config/avatar)')
 args = parser.parse_args()
 AGENT_NAME = args.agent
 PORT = args.port
@@ -26,7 +27,7 @@ UPLOAD_DIR = Path('/tmp/web_uploads')
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-AVATAR_DIR = SCRIPT_DIR / 'config' / 'avatar'
+AVATAR_DIR = Path(args.avatar_dir) if args.avatar_dir else (SCRIPT_DIR / 'config' / 'avatar')
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 FILE_ICON_DIR = SCRIPT_DIR / 'file_icons'
 
@@ -177,6 +178,21 @@ def poll():
 def sessions():
     with _history_lock:
         return jsonify({'sessions': list(_sessions), 'current': _current_session_id})
+
+
+@app.route('/nodes')
+def nodes():
+    """Return ROS2 node names filtered by /adam"""
+    import subprocess
+    try:
+        result = subprocess.run(['ros2', 'node', 'list'], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            all_nodes = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
+            adam_nodes = [n for n in all_nodes if '/adam' in n]
+            return jsonify({'nodes': adam_nodes, 'total': len(adam_nodes)})
+        return jsonify({'nodes': [], 'error': result.stderr.strip()})
+    except Exception as e:
+        return jsonify({'nodes': [], 'error': str(e)})
 
 @app.route('/config/avatar/<path:filename>')
 def serve_avatar(filename):

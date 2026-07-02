@@ -14,7 +14,7 @@
 //
 // 参数:
 //   agent_name       (string, 必填)  Agent 命名空间
-//   repo_dir         (string, 必填)  灵肤仓库根路径（skills 目录的父目录）
+//   repo_dir         (string, 必填)  灵魂仓库根路径（skills 目录的父目录）
 //   info_rate         (double, 1.0)  发布 Tools Info 的频率（Hz）
 //   default_timeout   (double, 30.0)  默认超时秒数
 //

@@ -22,7 +22,7 @@ struct OpenAIClient::Impl {
     std::string model_;
     double temperature_ = 1.0;
     double top_p_ = 1.0;
-    int max_tokens_ = 4096;
+    int max_tokens_ = 32768;
     bool thinking_enabled_ = false;
     std::string reasoning_effort_ = "high";
     std::string response_format_type_ = "text";

@@ -98,8 +98,6 @@ def generate_launch_description():
         output='screen',
     )
 
-
-
     web_search = Node(
         package='cs_output',
         executable='web_search_node',
