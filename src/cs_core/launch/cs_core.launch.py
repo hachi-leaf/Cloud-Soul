@@ -20,6 +20,7 @@ push_retry_max (5)      ✓
 context_dir                         ✓
 max_context_tokens                  ✓
 keep_context_ratio                  ✓
+llm_timeout_sec                     ✓
 openai_base_url          ✓            ✓
 openai_api_key           ✓            ✓
 openai_model             ✓            ✓
@@ -44,6 +45,7 @@ def generate_launch_description():
     context_dir        = LaunchConfiguration('context_dir',         default='~/.cloudsoul/contexts')
     max_context_tokens = LaunchConfiguration('max_context_tokens',  default='200000')
     keep_context_ratio = LaunchConfiguration('keep_context_ratio',  default='0.5')
+    llm_timeout_sec    = LaunchConfiguration('llm_timeout_sec',    default='30')
     openai_base_url    = LaunchConfiguration('openai_base_url',     default='https://api.deepseek.com')
     openai_api_key     = LaunchConfiguration('openai_api_key',      default='')
     openai_model       = LaunchConfiguration('openai_model',        default='deepseek-v4-pro')
@@ -60,6 +62,7 @@ def generate_launch_description():
         DeclareLaunchArgument('context_dir',         default_value='~/.cloudsoul/contexts'),
         DeclareLaunchArgument('max_context_tokens',  default_value='200000'),
         DeclareLaunchArgument('keep_context_ratio',  default_value='0.5'),
+        DeclareLaunchArgument('llm_timeout_sec',    default_value='30'),
         DeclareLaunchArgument('openai_base_url',     default_value='https://api.deepseek.com'),
         DeclareLaunchArgument('openai_api_key',      default_value=''),
         DeclareLaunchArgument('openai_model',        default_value='deepseek-v4-pro'),
@@ -99,6 +102,7 @@ def generate_launch_description():
                 'context_dir': context_dir,
                 'max_context_tokens': max_context_tokens,
                 'keep_context_ratio': keep_context_ratio,
+                'llm_timeout_sec': llm_timeout_sec,
                 'openai_base_url': openai_base_url,
                 'openai_api_key': openai_api_key,
                 'openai_model': openai_model,

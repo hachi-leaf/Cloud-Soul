@@ -47,7 +47,7 @@ public:
         declare_parameter<std::string>("agent_name", agent_name);
         declare_parameter<std::string>("context_dir", "");
         declare_parameter<int>("max_context_tokens", 32768);
-        declare_parameter<int>("llm_timeout_sec", 120);
+        declare_parameter<int>("llm_timeout_sec", 30);
         declare_parameter<double>("keep_context_ratio", 0.5);
         declare_parameter<std::string>("openai_base_url", "");
         declare_parameter<std::string>("openai_api_key", "");

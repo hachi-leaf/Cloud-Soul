@@ -80,6 +80,7 @@ PUSH_RETRY=$(yaml_get "repo.push_retry_max")
 
 MAX_CTX=$(yaml_get "loop.max_context_tokens")
 KEEP_CTX_RATIO=$(yaml_get "loop.keep_context_ratio")
+LLM_TIMEOUT=$(yaml_get "loop.llm_timeout_sec")
 DEFAULT_TIMEOUT=$(yaml_get "loop.default_timeout")
 CANCEL_TIMEOUT=$(yaml_get "loop.cancel_timeout")
 DELAY_TIMEOUT=$(yaml_get "loop.delay_timeout")
@@ -214,6 +215,7 @@ ros2 launch cs_core cs_core.launch.py \
     context_dir:="$CONTEXT_DIR" \
     max_context_tokens:="$MAX_CTX" \
     keep_context_ratio:="$KEEP_CTX_RATIO" \
+    llm_timeout_sec:="$LLM_TIMEOUT" \
     openai_base_url:="$LLM_URL" \
     openai_api_key:="$LLM_KEY" \
     openai_model:="$LLM_MODEL" \

@@ -133,6 +133,8 @@ def main():
     max_ctx = int(ask("max_context_tokens   上下文压缩阈值",
                        default="200000"))
     keep_ctx_ratio = float(ask("keep_context_ratio    上下文保留比例 [0.0,0.5]",
+                       default="30"))
+    llm_timeout = int(ask("llm_timeout_sec      LLM API 超时 (秒)",
                        default="0.5"))
     default_timeout = float(ask("default_timeout      工具调用超时 (秒)",
                                  default="30.0"))
